@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+contracts/node_modules/
+
+# build
+.output/
+dist/
+.nuxt/
+.cache/
+
+# env
+.env
+.env.production
+.env.testnet
+contracts/.env
+
+# misc
+*.log
+.DS_Store
