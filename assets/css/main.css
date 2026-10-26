@@ -1,15 +1,1 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  html {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
-}
-
-@layer utilities {
-  .animate-scan {
-    animation: scan 2s linear infinite;
-  }
-}
+/* Styles are injected via tailwind.config.ts plugins */

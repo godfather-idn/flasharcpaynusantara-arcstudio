@@ -1,245 +1,198 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from "vue";
+import { BrowserMultiFormatReader } from "@zxing/library";
+import { ArrowLeft, Zap, Image as ImageIcon, Loader2, XCircle } from "lucide-vue-next";
+
+const router = useRouter();
+
+const isScanning = ref(false);
+const scanError = ref("");
+const codeReader = ref<BrowserMultiFormatReader | null>(null);
+const videoRef = ref<HTMLVideoElement | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
+const isFlashOn = ref(false);
+
+let cleanupScanner: (() => void) | null = null;
+
+onMounted(() => {
+  if (typeof window !== "undefined") {
+    startScanner();
+  }
+});
+
+onUnmounted(() => {
+  stopScanner();
+});
+
+const toggleFlash = async () => {
+  if (!videoRef.value || !videoRef.value.srcObject) {
+    alert("Camera is not active.");
+    return;
+  }
+  const stream = videoRef.value.srcObject as MediaStream;
+  const track = stream.getVideoTracks()[0];
+  if (!track) return;
+  try {
+    const capabilities = track.getCapabilities() as any;
+    if (capabilities.torch) {
+      const newState = !isFlashOn.value;
+      await track.applyConstraints({ advanced: [{ torch: newState }] } as any);
+      isFlashOn.value = newState;
+    } else {
+      alert("Flash is not supported on this device.");
+    }
+  } catch (e) {
+    console.error("Failed to toggle flash", e);
+  }
+};
+
+const openGallery = () => {
+  fileInput.value?.click();
+};
+
+const handleFileUpload = async (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+  try {
+    isScanning.value = true;
+    scanError.value = "";
+    if (!codeReader.value) codeReader.value = new BrowserMultiFormatReader();
+    const imageUrl = URL.createObjectURL(file);
+    const result = await codeReader.value.decodeFromImageUrl(imageUrl);
+    URL.revokeObjectURL(imageUrl);
+    if (result) handleScanResult((result as any).text);
+  } catch {
+    scanError.value = "Could not find a QR code in that image.";
+    isScanning.value = false;
+  } finally {
+    if (target) target.value = "";
+  }
+};
+
+const startScanner = async () => {
+  if (isScanning.value) return;
+  try {
+    isScanning.value = true;
+    scanError.value = "";
+    codeReader.value = new BrowserMultiFormatReader();
+    const videoElement = document.getElementById("video") as HTMLVideoElement;
+    if (!videoElement) throw new Error("Video element not found");
+
+    await codeReader.value.decodeFromVideoDevice(null, videoElement, (result) => {
+      if (result) handleScanResult((result as any).text);
+    });
+
+    cleanupScanner = () => {
+      if (codeReader.value) codeReader.value.reset();
+    };
+  } catch {
+    isScanning.value = false;
+    scanError.value = "Failed to access camera. Please allow camera permission.";
+  }
+};
+
+const stopScanner = () => {
+  if (cleanupScanner) { cleanupScanner(); cleanupScanner = null; }
+  isScanning.value = false;
+  codeReader.value = null;
+};
+
+const handleScanResult = (qrText: string) => {
+  try {
+    stopScanner();
+    const url = new URL(qrText);
+    if (url.pathname === "/pay") {
+      const merchant = url.searchParams.get("merchant");
+      const amount = url.searchParams.get("amount");
+      const orderId = url.searchParams.get("orderId");
+      if (merchant && amount && orderId) {
+        router.push({ path: "/pay", query: { merchant, amount, orderId } });
+      } else {
+        throw new Error("Invalid payment QR code");
+      }
+    } else {
+      throw new Error("Not a payment QR code");
+    }
+  } catch {
+    scanError.value = "Invalid QR code. Please scan a valid FlashArcPay payment QR.";
+    isScanning.value = false;
+  }
+};
+
+const retryScan = () => {
+  scanError.value = "";
+  startScanner();
+};
+</script>
+
 <template>
-  <div class="relative w-full h-screen bg-black overflow-hidden">
-    <!-- Camera view -->
-    <video
-      ref="videoEl"
-      class="absolute inset-0 w-full h-full object-cover"
-      playsinline
-      muted
-    />
-
-    <!-- Overlay -->
-    <div class="absolute inset-0 flex flex-col">
-      <!-- Top bar -->
-      <div class="flex items-center justify-between px-4 pt-safe pt-6 pb-4 bg-gradient-to-b from-black/70 to-transparent">
-        <NuxtLink to="/" class="text-white font-medium flex items-center gap-1">
-          ← Back
-        </NuxtLink>
-        <span class="text-white font-bold text-lg">Scan QR Code</span>
-        <button
-          v-if="torchSupported"
-          @click="toggleTorch"
-          class="text-white text-xl"
-        >
-          {{ torchOn ? "🔦" : "💡" }}
+  <div class="fixed inset-0 bg-black overflow-hidden flex flex-col">
+    <!-- Top Bar -->
+    <div class="absolute top-0 left-0 right-0 z-20 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 to-transparent pt-6">
+      <button @click="router.push('/')" class="p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+        <ArrowLeft :size="24" />
+      </button>
+      <h1 class="text-xl font-semibold text-white">Pindai QRIS</h1>
+      <div class="flex items-center gap-2">
+        <button @click="toggleFlash" class="p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+          <Zap :size="24" :class="{ 'text-yellow-400 fill-yellow-400': isFlashOn, 'text-white': !isFlashOn }" />
         </button>
-        <div v-else class="w-8" />
-      </div>
-
-      <!-- Scan frame -->
-      <div class="flex-1 flex items-center justify-center">
-        <div class="relative w-64 h-64">
-          <!-- Corner markers -->
-          <div class="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-lg" />
-          <div class="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-lg" />
-          <div class="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-lg" />
-          <div class="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-lg" />
-
-          <!-- Scanning line -->
-          <div
-            v-if="scanning"
-            class="absolute left-0 right-0 h-0.5 bg-blue-400 shadow-[0_0_8px_2px_rgba(96,165,250,0.8)]"
-            :style="{ top: scanLinePos + '%' }"
-          />
-        </div>
-      </div>
-
-      <!-- Bottom bar -->
-      <div class="px-4 pb-10 bg-gradient-to-t from-black/70 to-transparent">
-        <p class="text-white/80 text-sm text-center mb-4">
-          {{ statusMessage }}
-        </p>
-
-        <!-- Camera error fallback -->
-        <div v-if="cameraError" class="bg-red-900/70 border border-red-500 rounded-xl p-4 mb-4">
-          <div class="text-white text-sm text-center">{{ cameraError }}</div>
-        </div>
-
-        <!-- Manual input toggle -->
-        <button
-          @click="showManual = !showManual"
-          class="w-full bg-white/20 border border-white/30 text-white rounded-xl py-3 font-medium hover:bg-white/30 transition mb-3"
-        >
-          ✏️ Enter Code Manually
+        <button @click="openGallery" class="p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+          <ImageIcon :size="24" />
         </button>
-
-        <!-- Manual input -->
-        <div v-if="showManual" class="bg-black/80 rounded-xl p-4 space-y-3">
-          <input
-            v-model="manualUrl"
-            type="url"
-            placeholder="Paste payment URL…"
-            class="w-full bg-white/10 border border-white/20 text-white rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-400"
-          />
-          <button
-            @click="processManualUrl"
-            :disabled="!manualUrl"
-            class="w-full bg-blue-600 text-white rounded-lg py-3 font-semibold disabled:opacity-40"
-          >
-            Go to Payment →
-          </button>
-          <div v-if="manualError" class="text-red-400 text-sm text-center">{{ manualError }}</div>
-        </div>
       </div>
+    </div>
+
+    <!-- Video -->
+    <video id="video" ref="videoRef" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline></video>
+
+    <!-- Hidden file input -->
+    <input type="file" ref="fileInput" accept="image/*" class="hidden" @change="handleFileUpload" />
+
+    <!-- Overlay Focus Area -->
+    <div class="absolute inset-0 z-10 pointer-events-none flex items-center justify-center overflow-hidden">
+      <div class="relative w-64 h-64 sm:w-72 sm:h-72 rounded-xl shadow-[0_0_0_4000px_rgba(0,0,0,0.65)]">
+        <!-- Corner markers -->
+        <div class="absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 border-white rounded-tl-xl"></div>
+        <div class="absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 border-white rounded-tr-xl"></div>
+        <div class="absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 border-white rounded-bl-xl"></div>
+        <div class="absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 border-white rounded-br-xl"></div>
+        <!-- Scan Line -->
+        <div v-if="!scanError" class="absolute left-0 right-0 h-0.5 bg-green-400 shadow-[0_0_8px_#4ade80] animate-scan"></div>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div v-if="isScanning && !videoRef" class="absolute inset-0 z-30 flex items-center justify-center bg-black/50">
+      <Loader2 :size="48" class="text-white animate-spin" />
+    </div>
+
+    <!-- Error State -->
+    <div v-if="scanError" class="absolute inset-0 z-30 flex items-center justify-center bg-black/80">
+      <div class="text-center p-6 max-w-xs bg-gray-900 rounded-2xl border border-gray-700 shadow-xl">
+        <XCircle :size="48" class="text-red-500 mx-auto mb-4" />
+        <p class="text-white mb-6">{{ scanError }}</p>
+        <button @click="retryScan" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl transition-colors">
+          Coba Lagi
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom Instructions -->
+    <div class="absolute bottom-12 left-0 right-0 z-20 text-center px-4">
+      <p class="text-white bg-black/60 inline-block px-6 py-3 rounded-full text-sm font-medium backdrop-blur-md">
+        Arahkan kamera ke kode QR / QRIS
+      </p>
     </div>
   </div>
 </template>
 
-<script setup lang="ts">
-const router = useRouter();
-const videoEl = ref<HTMLVideoElement | null>(null);
-
-const scanning = ref(false);
-const cameraError = ref("");
-const statusMessage = ref("Point camera at a FlashArcPay QR code");
-const showManual = ref(false);
-const manualUrl = ref("");
-const manualError = ref("");
-const torchSupported = ref(false);
-const torchOn = ref(false);
-const scanLinePos = ref(0);
-
-let animFrame: number | null = null;
-let scanInterval: ReturnType<typeof setInterval> | null = null;
-let stream: MediaStream | null = null;
-// ZXing reader is lazily imported in startCamera
-let _readerRef: { decodeFromCanvas: (c: HTMLCanvasElement) => { getText: () => string } } | null = null;
-
-// Animate scan line
-const animateScanLine = () => {
-  let direction = 1;
-  scanInterval = setInterval(() => {
-    scanLinePos.value += direction * 2;
-    if (scanLinePos.value >= 98) direction = -1;
-    if (scanLinePos.value <= 2) direction = 1;
-  }, 20);
-};
-
-const stopCamera = () => {
-  if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-  }
-  if (scanInterval) clearInterval(scanInterval);
-  if (animFrame) cancelAnimationFrame(animFrame);
-  scanning.value = false;
-};
-
-const parsePaymentUrl = (urlStr: string): string | null => {
-  try {
-    const url = new URL(urlStr);
-    const merchant = url.searchParams.get("merchant");
-    const amount = url.searchParams.get("amount");
-    const orderId = url.searchParams.get("orderId");
-    if (
-      !merchant ||
-      !amount ||
-      !orderId ||
-      !/^0x[0-9a-fA-F]{40}$/.test(merchant)
-    )
-      return null;
-    return `/pay?merchant=${merchant}&amount=${amount}&orderId=${encodeURIComponent(orderId)}`;
-  } catch {
-    return null;
-  }
-};
-
-const processResult = (text: string) => {
-  stopCamera();
-  const path = parsePaymentUrl(text);
-  if (path) {
-    statusMessage.value = "QR detected! Redirecting…";
-    router.push(path);
-  } else {
-    cameraError.value = "QR code is not a valid FlashArcPay payment link.";
-    scanning.value = false;
-  }
-};
-
-const processManualUrl = () => {
-  manualError.value = "";
-  const path = parsePaymentUrl(manualUrl.value);
-  if (path) {
-    stopCamera();
-    router.push(path);
-  } else {
-    manualError.value = "Invalid payment URL. Please check and try again.";
-  }
-};
-
-const toggleTorch = async () => {
-  if (!stream) return;
-  const track = stream.getVideoTracks()[0];
-  if (!track) return;
-  try {
-    await (track as unknown as { applyConstraints: (c: unknown) => Promise<void> })
-      .applyConstraints({ advanced: [{ torch: !torchOn.value }] });
-    torchOn.value = !torchOn.value;
-  } catch {
-    /* torch not supported */
-  }
-};
-
-const startCamera = async () => {
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-    });
-
-    if (videoEl.value) {
-      videoEl.value.srcObject = stream;
-      await videoEl.value.play();
-    }
-
-    scanning.value = true;
-    animateScanLine();
-
-    // Check torch support
-    const track = stream.getVideoTracks()[0];
-    const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
-    torchSupported.value = !!capabilities?.torch;
-
-    // Lazy-load ZXing
-    const ZXing = await import("@zxing/library");
-    const reader = new ZXing.BrowserQRCodeReader();
-    _readerRef = reader as unknown as typeof _readerRef;
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx || !videoEl.value) return;
-
-    const video = videoEl.value;
-
-    const scan = () => {
-      if (!scanning.value) return;
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        try {
-          // decodeFromCanvas is the stable API in @zxing/library 0.21
-          const result = (reader as unknown as { decodeFromCanvas: (c: HTMLCanvasElement) => { getText: () => string } }).decodeFromCanvas(canvas);
-          if (result) processResult(result.getText());
-        } catch {
-          /* no QR yet — thrown when nothing is decoded */
-        }
-      }
-      animFrame = requestAnimationFrame(scan);
-    };
-    animFrame = requestAnimationFrame(scan);
-  } catch (e) {
-    cameraError.value =
-      e instanceof Error && e.name === "NotAllowedError"
-        ? "Camera access denied. Please allow camera permission and reload."
-        : "Unable to access camera. Use manual input instead.";
-    showManual.value = true;
-  }
-};
-
-onMounted(() => {
-  // Only run in browser (SPA mode)
-  startCamera();
-});
-
-onUnmounted(stopCamera);
-</script>
+<style scoped>
+@keyframes scan {
+  0% { top: 0; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+</style>

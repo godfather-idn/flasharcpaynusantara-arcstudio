@@ -1,256 +1,280 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import QRCode from "qrcode";
+import { ArrowLeft, QrCode, DollarSign, Hash, CheckCircle2, Clock, XCircle, Wallet, History, Copy } from "lucide-vue-next";
+import type { Address, Hash as TxHash } from "viem";
+
+const router = useRouter();
+const arc = useArcAppKit();
+
+const chainId = Number(import.meta.env.VITE_ARC_CHAIN_ID || 5042002);
+const isMainnet = computed(() => chainId === 5042);
+const networkLabel = computed(() => isMainnet.value ? "Mainnet" : "Testnet");
+
+// Form state
+const amount = ref("");
+const generateOrderId = () => `ORD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+const orderId = ref(generateOrderId());
+const qrCodeUrl = ref("");
+const showQR = ref(false);
+const paymentStatus = ref<"idle" | "waiting" | "success" | "error">("idle");
+const paymentMessage = ref("");
+const copied = ref(false);
+const showWalletModal = ref(false);
+const isMobileDevice = ref(false);
+
+let cleanupWatcher: (() => void) | null = null;
+
+const isMobileCheck = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+};
+
+onMounted(async () => {
+  isMobileDevice.value = isMobileCheck();
+  try {
+    await arc.connectWallet();
+  } catch (e) {
+    console.error("Failed to connect wallet:", e);
+  }
+});
+
+onUnmounted(() => {
+  if (cleanupWatcher) cleanupWatcher();
+});
+
+const formatAddress = (address: string) => {
+  if (!address) return "";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+};
+
+const copyAddress = async () => {
+  if (!arc.account.value) return;
+  try {
+    await navigator.clipboard.writeText(arc.account.value);
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2000);
+  } catch {}
+};
+
+const handleWalletSelect = async (walletType: string) => {
+  showWalletModal.value = false;
+  try {
+    await arc.connectWallet();
+  } catch (e: any) {
+    console.error("Failed to connect wallet:", e);
+  }
+};
+
+const generateQR = async () => {
+  if (!arc.isConnected.value || !arc.account.value || !amount.value || !orderId.value) return;
+
+  const amountNum = parseFloat(amount.value);
+  if (isNaN(amountNum) || amountNum <= 0) return;
+
+  try {
+    const amountRaw = arc.parseUSDC(amount.value).toString();
+    const baseUrl = window.location.origin;
+    const payUrl = `${baseUrl}/pay?merchant=${arc.account.value}&amount=${amountRaw}&orderId=${orderId.value}`;
+
+    qrCodeUrl.value = await QRCode.toDataURL(payUrl, {
+      width: 300,
+      margin: 2,
+      color: { dark: "#000000", light: "#FFFFFF" },
+    });
+
+    showQR.value = true;
+    paymentStatus.value = "waiting";
+    paymentMessage.value = "Waiting for payment...";
+
+    if (cleanupWatcher) cleanupWatcher();
+    cleanupWatcher = arc.watchPayments(arc.account.value as Address, (event) => {
+      if (event.orderId === orderId.value) {
+        paymentStatus.value = "success";
+        paymentMessage.value = `Payment received! ${arc.formatUSDC(event.amount)} USDC`;
+        if (cleanupWatcher) { cleanupWatcher(); cleanupWatcher = null; }
+      }
+    });
+
+    // 5-minute timeout
+    setTimeout(() => {
+      if (paymentStatus.value === "waiting") {
+        paymentStatus.value = "error";
+        paymentMessage.value = "Payment timeout. Please generate a new QR code.";
+        if (cleanupWatcher) { cleanupWatcher(); cleanupWatcher = null; }
+      }
+    }, 5 * 60 * 1000);
+  } catch (e) {
+    console.error("Failed to generate QR:", e);
+  }
+};
+
+const resetForm = () => {
+  amount.value = "";
+  orderId.value = generateOrderId();
+  qrCodeUrl.value = "";
+  showQR.value = false;
+  paymentStatus.value = "idle";
+  paymentMessage.value = "";
+  if (cleanupWatcher) { cleanupWatcher(); cleanupWatcher = null; }
+};
+</script>
+
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <!-- Header -->
-    <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div class="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-        <NuxtLink to="/" class="text-gray-500 hover:text-gray-800 transition">
-          ← Back
+  <div class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4 pb-8">
+    <div class="max-w-4xl mx-auto">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-6 mt-4">
+        <button @click="router.push('/')" class="flex items-center gap-2 text-white hover:text-purple-200 transition-colors text-lg">
+          <ArrowLeft :size="24" />
+          <span class="font-medium">Back</span>
+        </button>
+        <NuxtLink to="/merchant-history" class="flex items-center gap-2 text-white hover:text-purple-200 transition-colors text-lg">
+          <History :size="24" />
+          <span class="font-medium">History</span>
         </NuxtLink>
-        <h1 class="text-xl font-bold text-gray-900 flex-1 text-center">Merchant POS</h1>
-        <NuxtLink to="/merchant-history" class="text-blue-600 text-sm font-medium">History</NuxtLink>
-      </div>
-    </header>
-
-    <div class="max-w-lg mx-auto px-4 py-6 space-y-4">
-      <!-- Wallet card -->
-      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-        <div v-if="arc.isConnected.value && arc.account.value" class="flex items-center justify-between">
-          <div>
-            <div class="text-xs text-gray-500 uppercase tracking-wide">Merchant Wallet</div>
-            <div class="font-mono text-sm text-gray-800 flex items-center gap-2">
-              {{ shortAddress(arc.account.value) }}
-              <button @click="copyAddress" class="text-blue-500 hover:text-blue-700 text-xs">
-                {{ copied ? "✓ Copied" : "Copy" }}
-              </button>
-            </div>
-          </div>
-          <div class="text-right">
-            <div class="text-xs text-gray-500">USDC Balance</div>
-            <div class="font-bold text-gray-900">{{ arc.formatBalance() }} USDC</div>
-          </div>
-        </div>
-        <button
-          v-else
-          @click="arc.connectWallet"
-          :disabled="arc.isLoading.value"
-          class="w-full bg-blue-600 text-white rounded-lg py-3 font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
-        >
-          {{ arc.isLoading.value ? "Connecting…" : "Connect Wallet" }}
-        </button>
-        <div v-if="arc.error.value" class="mt-2 text-red-500 text-sm">{{ arc.error.value }}</div>
       </div>
 
-      <!-- Input form -->
-      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-4">
-        <h2 class="font-bold text-gray-900">New Payment Request</h2>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Amount (USDC)</label>
-          <div class="relative">
-            <input
-              v-model="amount"
-              type="number"
-              min="0.000001"
-              step="0.01"
-              placeholder="0.00"
-              class="w-full border-2 border-gray-300 rounded-lg p-4 text-lg font-bold focus:border-blue-500 focus:outline-none pr-20"
-            />
-            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">USDC</span>
-          </div>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Order ID</label>
-          <input
-            v-model="orderId"
-            type="text"
-            placeholder="ORDER-001"
-            class="w-full border-2 border-gray-300 rounded-lg p-4 focus:border-blue-500 focus:outline-none"
-          />
-        </div>
-        <button
-          @click="generateQR"
-          :disabled="!canGenerate"
-          class="w-full bg-blue-600 text-white rounded-lg py-4 font-bold text-lg hover:bg-blue-700 disabled:opacity-40 transition"
-        >
-          {{ generating ? "Generating…" : "Generate QR Code" }}
-        </button>
+      <!-- Page Title -->
+      <div class="mb-6 text-center">
+        <h1 class="text-2xl font-bold text-white">Merchant POS</h1>
       </div>
 
-      <!-- QR Code display -->
-      <div v-if="qrDataUrl" class="bg-white rounded-xl shadow-lg border border-gray-200 p-6 text-center">
-        <h3 class="font-bold text-gray-900 mb-4">Scan to Pay</h3>
-        <div class="flex justify-center mb-4">
-          <img :src="qrDataUrl" alt="Payment QR Code" class="w-64 h-64 rounded-lg shadow" />
+      <!-- Connection Status -->
+      <div class="bg-white/10 backdrop-blur-lg rounded-xl p-4 mb-6 border border-white/20">
+        <div v-if="arc.isConnected.value" class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-green-500" style="box-shadow: 0 0 8px #22c55e"></div>
+            <span class="text-white font-medium">Connected</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs bg-purple-600/50 border border-purple-400/50 px-2 py-1 rounded-md text-white">{{ networkLabel }}</span>
+            <button @click="copyAddress" class="text-white font-medium bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md text-sm transition-colors" title="Copy Address">
+              {{ copied ? "Copied!" : formatAddress(arc.account.value || "") }}
+            </button>
+          </div>
         </div>
-        <div class="text-sm text-gray-500 mb-1">Amount: <span class="font-bold text-gray-900">{{ amount }} USDC</span></div>
-        <div class="text-sm text-gray-500 mb-4">Order ID: <span class="font-mono text-gray-900">{{ orderId }}</span></div>
-
-        <!-- Buttons -->
-        <div class="flex gap-2 justify-center">
-          <a
-            :href="qrDataUrl"
-            :download="`qr-${orderId}.png`"
-            class="bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg px-4 py-2 text-sm font-medium transition"
-          >
-            ⬇ Download
-          </a>
-          <button
-            @click="copyPaymentLink"
-            class="bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg px-4 py-2 text-sm font-medium transition"
-          >
-            {{ copiedLink ? "✓ Copied" : "🔗 Copy Link" }}
+        <div v-else class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-red-500" style="box-shadow: 0 0 8px #ef4444"></div>
+            <span class="text-white font-medium">Not Connected</span>
+          </div>
+          <button @click="showWalletModal = true" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 text-sm">
+            <Wallet :size="16" />
+            Connect Wallet
           </button>
         </div>
       </div>
 
-      <!-- Payment status -->
-      <div v-if="qrDataUrl" class="bg-gray-50 rounded-lg p-4 border-2" :class="statusBorderClass">
-        <div class="flex items-center gap-3">
-          <div class="text-2xl">{{ statusIcon }}</div>
+      <!-- Form -->
+      <div v-if="!showQR" class="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
+        <h2 class="text-2xl font-bold text-white mb-6">Create Payment QR</h2>
+        <div class="space-y-6">
+          <!-- Amount -->
           <div>
-            <div class="font-semibold text-gray-900">{{ statusLabel }}</div>
-            <div v-if="paymentEvent" class="text-sm text-gray-600 mt-1">
-              From: {{ shortAddress(paymentEvent.payer) }} · Tx:
-              <a
-                :href="`https://explorer.testnet.arc.io/tx/${paymentEvent.txHash}`"
-                target="_blank"
-                class="text-blue-600 hover:underline font-mono"
-              >{{ shortHash(paymentEvent.txHash) }}</a>
+            <label class="block text-white font-medium mb-2 flex items-center gap-2">
+              <DollarSign :size="20" />
+              Amount (USDC)
+            </label>
+            <input
+              v-model="amount"
+              type="number"
+              inputmode="decimal"
+              step="0.01"
+              min="0"
+              placeholder="Enter amount in USDC"
+              class="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-purple-400 focus:bg-white/20 transition-all"
+            />
+          </div>
+          <!-- Order ID -->
+          <div>
+            <label class="block text-white font-medium mb-2 flex items-center gap-2">
+              <Hash :size="20" />
+              Order ID
+            </label>
+            <input
+              v-model="orderId"
+              type="text"
+              placeholder="Enter order ID"
+              class="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-purple-400 focus:bg-white/20 transition-all"
+            />
+          </div>
+          <!-- Generate Button -->
+          <button
+            @click="generateQR"
+            :disabled="!arc.isConnected.value || !amount || !orderId"
+            class="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <QrCode :size="20" />
+            Generate QR Code
+          </button>
+        </div>
+      </div>
+
+      <!-- QR Code Display -->
+      <div v-else class="space-y-6">
+        <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
+          <div class="text-center mb-6">
+            <h2 class="text-2xl font-bold text-white">Payment QR Code</h2>
+          </div>
+          <div class="flex flex-col items-center">
+            <div class="bg-white p-4 rounded-xl mb-6 relative">
+              <img :src="qrCodeUrl" alt="Payment QR Code" class="w-64 h-64 transition-all duration-300" :class="{ 'opacity-30 blur-[2px]': paymentStatus === 'error' }" />
+              <div v-if="paymentStatus === 'error'" class="absolute inset-0 flex items-center justify-center">
+                <XCircle :size="64" class="text-red-500 bg-white rounded-full" />
+              </div>
             </div>
-            <div v-if="pollStatus === 'waiting'" class="text-xs text-gray-400 mt-1">
-              Listening for payment… ({{ waitSeconds }}s)
+            <div class="text-center space-y-2 mb-4">
+              <p class="text-purple-200 uppercase tracking-widest text-sm font-semibold">[ Total Bayar ]</p>
+              <p class="text-white text-4xl font-extrabold">{{ amount }} USDC</p>
+              <p class="text-purple-200 pt-2">Order ID: {{ orderId }}</p>
             </div>
+            <div v-if="paymentStatus !== 'error' && paymentStatus !== 'success'" class="mt-2 w-full max-w-xs">
+              <button @click="resetForm" class="w-full bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-6 rounded-xl transition-all border border-white/20">
+                Generate New QR
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment Status -->
+        <div v-if="paymentStatus === 'error'" class="backdrop-blur-lg rounded-xl p-6 border bg-red-500/20 border-red-500 text-center">
+          <div class="flex items-center justify-center gap-3 mb-4">
+            <XCircle :size="24" class="text-red-400" />
+            <span class="text-white font-semibold">{{ paymentMessage }}</span>
+          </div>
+          <button @click="resetForm" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2">
+            Buat QR Code Baru
+          </button>
+        </div>
+
+        <div v-else
+          :class="{
+            'bg-green-500/20 border-green-500': paymentStatus === 'success',
+            'bg-yellow-500/20 border-yellow-500': paymentStatus === 'waiting',
+          }"
+          class="backdrop-blur-lg rounded-xl p-6 border"
+        >
+          <div class="flex items-center gap-3">
+            <CheckCircle2 v-if="paymentStatus === 'success'" :size="24" class="text-green-400" />
+            <Clock v-if="paymentStatus === 'waiting'" :size="24" class="text-yellow-400" />
+            <span class="text-white font-semibold">{{ paymentMessage }}</span>
+          </div>
+          <div v-if="paymentStatus === 'success'" class="mt-4">
+            <button @click="resetForm" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors">
+              New Transaction
+            </button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Wallet Modal -->
+    <WalletConnectModal
+      :is-open="showWalletModal"
+      :is-mobile="isMobileDevice"
+      @close="showWalletModal = false"
+      @select-wallet="handleWalletSelect"
+    />
   </div>
 </template>
-
-<script setup lang="ts">
-import QRCode from "qrcode";
-import type { Address, Hash } from "viem";
-
-const arc = useArcAppKit();
-
-const amount = ref("");
-const orderId = ref("");
-const qrDataUrl = ref("");
-const generating = ref(false);
-const copied = ref(false);
-const copiedLink = ref(false);
-const pollStatus = ref<"idle" | "waiting" | "success" | "error">("idle");
-const waitSeconds = ref(0);
-const paymentEvent = ref<{
-  payer: Address;
-  orderId: string;
-  amount: bigint;
-  txHash: Hash;
-} | null>(null);
-
-let cleanupWatcher: (() => void) | null = null;
-let waitTimer: ReturnType<typeof setInterval> | null = null;
-
-const canGenerate = computed(
-  () =>
-    arc.isConnected.value &&
-    arc.account.value &&
-    Number(amount.value) > 0 &&
-    orderId.value.trim().length > 0 &&
-    !generating.value
-);
-
-const statusBorderClass = computed(() => {
-  if (pollStatus.value === "success") return "border-green-400";
-  if (pollStatus.value === "error") return "border-red-400";
-  if (pollStatus.value === "waiting") return "border-yellow-400";
-  return "border-gray-200";
-});
-
-const statusIcon = computed(() => {
-  if (pollStatus.value === "success") return "✅";
-  if (pollStatus.value === "error") return "❌";
-  if (pollStatus.value === "waiting") return "⏳";
-  return "🔵";
-});
-
-const statusLabel = computed(() => {
-  if (pollStatus.value === "success") return "Payment received!";
-  if (pollStatus.value === "error") return "Payment failed";
-  if (pollStatus.value === "waiting") return "Waiting for payment…";
-  return "QR code ready";
-});
-
-const shortAddress = (addr: string) =>
-  `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-const shortHash = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
-
-const copyAddress = async () => {
-  if (!arc.account.value) return;
-  await navigator.clipboard.writeText(arc.account.value);
-  copied.value = true;
-  setTimeout(() => (copied.value = false), 2000);
-};
-
-const copyPaymentLink = async () => {
-  if (!arc.account.value) return;
-  const url = buildPaymentUrl();
-  await navigator.clipboard.writeText(url);
-  copiedLink.value = true;
-  setTimeout(() => (copiedLink.value = false), 2000);
-};
-
-const buildPaymentUrl = () => {
-  if (!arc.account.value) return "";
-  const base = window.location.origin;
-  const amountRaw = arc.parseUSDC(amount.value).toString();
-  return `${base}/pay?merchant=${arc.account.value}&amount=${amountRaw}&orderId=${encodeURIComponent(orderId.value)}`;
-};
-
-const generateQR = async () => {
-  if (!canGenerate.value) return;
-  generating.value = true;
-  qrDataUrl.value = "";
-  paymentEvent.value = null;
-  pollStatus.value = "idle";
-  cleanupPoll();
-
-  try {
-    const url = buildPaymentUrl();
-    qrDataUrl.value = await QRCode.toDataURL(url, { width: 256, margin: 1 });
-    pollStatus.value = "waiting";
-    waitSeconds.value = 0;
-    waitTimer = setInterval(() => waitSeconds.value++, 1000);
-
-    // Start event listener
-    const merchant = arc.account.value as Address;
-    cleanupWatcher = arc.watchPayments(merchant, (event) => {
-      if (event.orderId === orderId.value) {
-        paymentEvent.value = {
-          payer: event.payer,
-          orderId: event.orderId,
-          amount: event.amount,
-          txHash: event.txHash,
-        };
-        pollStatus.value = "success";
-        cleanupPoll();
-        arc.fetchBalance();
-      }
-    });
-  } finally {
-    generating.value = false;
-  }
-};
-
-const cleanupPoll = () => {
-  if (cleanupWatcher) {
-    cleanupWatcher();
-    cleanupWatcher = null;
-  }
-  if (waitTimer) {
-    clearInterval(waitTimer);
-    waitTimer = null;
-  }
-};
-
-onUnmounted(cleanupPoll);
-</script>

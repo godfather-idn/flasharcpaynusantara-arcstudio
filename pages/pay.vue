@@ -1,203 +1,309 @@
-<template>
-  <div class="min-h-screen bg-gray-50">
-    <!-- Header -->
-    <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div class="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-        <NuxtLink to="/" class="text-gray-500 hover:text-gray-800">← Back</NuxtLink>
-        <h1 class="text-xl font-bold text-gray-900 flex-1 text-center">Payment Details</h1>
-        <NuxtLink to="/scan" class="text-blue-600 text-sm font-medium">Scan QR</NuxtLink>
-      </div>
-    </header>
-
-    <div class="max-w-lg mx-auto px-4 py-6 space-y-4">
-      <!-- Invalid URL warning -->
-      <div v-if="!isValidParams" class="bg-red-50 border-2 border-red-400 rounded-xl p-6 text-center">
-        <div class="text-4xl mb-2">❌</div>
-        <div class="font-bold text-red-700">Invalid Payment Link</div>
-        <div class="text-red-500 text-sm mt-1">Required parameters are missing or invalid.</div>
-        <NuxtLink to="/scan" class="inline-block mt-4 bg-red-600 text-white rounded-lg px-6 py-2 font-semibold hover:bg-red-700">
-          Scan a New QR
-        </NuxtLink>
-      </div>
-
-      <template v-else>
-        <!-- Payment summary -->
-        <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
-          <h2 class="font-bold text-gray-900 mb-4">Payment Summary</h2>
-          <div class="space-y-3">
-            <div class="flex justify-between">
-              <span class="text-gray-500">Merchant</span>
-              <span class="font-mono text-sm text-gray-800">{{ shortAddress(params.merchant) }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-gray-500">Order ID</span>
-              <span class="font-mono text-sm text-gray-800">{{ params.orderId }}</span>
-            </div>
-            <div class="border-t border-gray-200 pt-3 flex justify-between items-center">
-              <span class="font-bold text-gray-900 text-lg">Total</span>
-              <span class="font-bold text-3xl text-gray-900">{{ displayAmount }} USDC</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Wallet section -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-          <div v-if="!arc.isConnected.value">
-            <div class="text-center text-gray-500 mb-4">Connect your wallet to pay</div>
-            <button
-              @click="arc.connectWallet"
-              :disabled="arc.isLoading.value"
-              class="w-full bg-blue-600 text-white rounded-lg py-4 font-bold hover:bg-blue-700 disabled:opacity-50 transition"
-            >
-              {{ arc.isLoading.value ? "Connecting…" : "Connect Wallet" }}
-            </button>
-            <div v-if="arc.error.value" class="mt-2 text-red-500 text-sm text-center">{{ arc.error.value }}</div>
-          </div>
-
-          <div v-else>
-            <div class="flex justify-between items-center mb-4">
-              <div>
-                <div class="text-xs text-gray-500">Your Wallet</div>
-                <div class="font-mono text-sm">{{ shortAddress(arc.account.value!) }}</div>
-              </div>
-              <div class="text-right">
-                <div class="text-xs text-gray-500">USDC Balance</div>
-                <div class="font-bold" :class="hasEnough ? 'text-gray-900' : 'text-red-500'">
-                  {{ arc.formatBalance() }} USDC
-                </div>
-              </div>
-            </div>
-
-            <div v-if="!hasEnough" class="bg-red-50 border border-red-300 rounded-lg p-3 mb-4 text-sm text-red-600">
-              ⚠️ Insufficient USDC balance. You need {{ displayAmount }} USDC.
-            </div>
-
-            <!-- Progress steps -->
-            <div v-if="payStatus !== 'idle'" class="mb-4">
-              <div class="flex items-center gap-2 text-sm mb-1">
-                <span :class="stepClass(1)">1. Connect</span>
-                <span class="text-gray-300">→</span>
-                <span :class="stepClass(2)">2. Approve</span>
-                <span class="text-gray-300">→</span>
-                <span :class="stepClass(3)">3. Confirm</span>
-              </div>
-              <div v-if="txHash" class="text-xs text-gray-500 mt-1">
-                Tx:
-                <a :href="`https://explorer.testnet.arc.io/tx/${txHash}`" target="_blank" class="text-blue-600 hover:underline font-mono">
-                  {{ shortHash(txHash) }}
-                </a>
-              </div>
-            </div>
-
-            <!-- Pay button -->
-            <button
-              v-if="payStatus !== 'success'"
-              @click="pay"
-              :disabled="!hasEnough || payStatus === 'processing'"
-              class="w-full bg-green-600 text-white rounded-lg py-4 font-bold text-lg hover:bg-green-700 disabled:opacity-50 transition"
-            >
-              {{ payButtonLabel }}
-            </button>
-
-            <!-- Success state -->
-            <div v-if="payStatus === 'success'" class="bg-green-50 border-2 border-green-500 rounded-xl p-5 text-center">
-              <div class="text-4xl mb-2">🎉</div>
-              <div class="font-bold text-green-700 text-lg">Payment Successful!</div>
-              <div class="text-green-600 text-sm mt-1">Your payment has been processed onchain.</div>
-              <div class="flex gap-2 justify-center mt-4">
-                <NuxtLink to="/scan" class="bg-green-600 text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-green-700">
-                  Scan Another
-                </NuxtLink>
-                <NuxtLink :to="`/receipt?txHash=${txHash}&merchant=${params.merchant}&orderId=${params.orderId}&amount=${params.rawAmount}&payer=${arc.account.value}`" class="bg-gray-100 text-gray-700 rounded-lg px-4 py-2 text-sm font-semibold hover:bg-gray-200">
-                  View Receipt
-                </NuxtLink>
-              </div>
-            </div>
-
-            <!-- Error state -->
-            <div v-if="payStatus === 'error'" class="mt-3 bg-red-50 border border-red-300 rounded-lg p-3 text-sm text-red-600">
-              {{ payError }}
-              <button @click="payStatus = 'idle'; payError = ''" class="ml-2 underline">Retry</button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import type { Hash } from "viem";
+import { ref, computed, onMounted, watch } from "vue";
+import { ArrowLeft, Wallet, CheckCircle2, Loader2, XCircle, DollarSign, Hash, User, Receipt, History, Copy } from "lucide-vue-next";
 
+const router = useRouter();
 const route = useRoute();
 const arc = useArcAppKit();
 
-const params = computed(() => {
-  const merchant = (route.query.merchant as string) || "";
-  const rawAmount = (route.query.amount as string) || "";
-  const orderId = (route.query.orderId as string) || "";
-  return { merchant, rawAmount, orderId };
+const chainId = Number(import.meta.env.VITE_ARC_CHAIN_ID || 5042002);
+const isMainnet = computed(() => chainId === 5042);
+const networkLabel = computed(() => isMainnet.value ? "Mainnet" : "Testnet");
+const networkName = computed(() => isMainnet.value ? "Arc Mainnet" : "Arc Testnet");
+
+// Payment details from URL
+const merchantAddress = ref<`0x${string}` | "">("");
+const amount = ref("");     // display USDC string
+const rawAmount = ref("");  // raw USDC units string
+const orderId = ref("");
+
+// Payment state
+const paymentStatus = ref<"idle" | "processing" | "success" | "error">("idle");
+const paymentMessage = ref("");
+const transactionHash = ref("");
+const isConnecting = ref(false);
+const showWalletModal = ref(false);
+const isMobileDevice = ref(false);
+
+const explorerUrl = import.meta.env.VITE_ARC_EXPLORER_URL || "https://explorer.testnet.arc.io";
+
+const isMobileCheck = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+};
+
+watch(arc.isConnected, (newVal) => {
+  if (newVal && paymentStatus.value === "error" && paymentMessage.value.includes("connect wallet")) {
+    paymentStatus.value = "idle";
+    paymentMessage.value = "";
+  }
 });
 
-const isValidParams = computed(() => {
-  const { merchant, rawAmount, orderId } = params.value;
+const copyToClipboard = async (text: string) => {
+  try { await navigator.clipboard.writeText(text); } catch {}
+};
+
+onMounted(() => {
+  isMobileDevice.value = isMobileCheck();
+
+  if (route.query.merchant) merchantAddress.value = route.query.merchant as `0x${string}`;
+  if (route.query.amount) {
+    rawAmount.value = route.query.amount as string;
+    // amount query is raw USDC units (6 decimals) — convert to display
+    try {
+      amount.value = arc.formatUSDC(BigInt(rawAmount.value));
+    } catch {
+      amount.value = route.query.amount as string;
+    }
+  }
+  if (route.query.orderId) orderId.value = route.query.orderId as string;
+
+  if (!merchantAddress.value || !rawAmount.value || !orderId.value) {
+    paymentStatus.value = "error";
+    paymentMessage.value = "Invalid payment parameters. Please scan a valid QR code.";
+  }
+});
+
+const handleConnectWallet = async () => {
+  isConnecting.value = true;
+  try {
+    await arc.connectWallet();
+    await arc.fetchBalance();
+  } catch (e) {
+    paymentStatus.value = "error";
+    paymentMessage.value = "Failed to connect wallet. Please try again.";
+  } finally {
+    isConnecting.value = false;
+  }
+};
+
+const handleWalletSelect = async (walletType: string) => {
+  showWalletModal.value = false;
+  await handleConnectWallet();
+};
+
+const formatAddress = (address: string) => {
+  if (!address) return "";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+};
+
+const formatBalance = (bal: bigint) => arc.formatBalance(bal);
+
+const canProcessPayment = computed(() => {
   return (
-    /^0x[0-9a-fA-F]{40}$/.test(merchant) &&
-    Number(rawAmount) > 0 &&
-    orderId.length > 0
+    arc.isConnected.value &&
+    merchantAddress.value &&
+    rawAmount.value &&
+    orderId.value &&
+    paymentStatus.value !== "processing" &&
+    paymentStatus.value !== "success"
   );
 });
 
-const displayAmount = computed(() => {
-  if (!params.value.rawAmount) return "0.00";
-  return arc.formatUSDC(BigInt(params.value.rawAmount));
-});
-
 const hasEnough = computed(() => {
-  if (!arc.isConnected.value) return false;
-  return arc.balance.value >= BigInt(params.value.rawAmount || "0");
+  if (!arc.isConnected.value) return true; // don't show warning before connecting
+  try {
+    return arc.balance.value >= BigInt(rawAmount.value || "0");
+  } catch {
+    return false;
+  }
 });
 
-const payStatus = ref<"idle" | "processing" | "success" | "error">("idle");
-const payError = ref("");
-const txHash = ref<Hash | "">("");
-const currentStep = ref(1);
+const handlePayment = async () => {
+  if (!arc.isConnected.value || !merchantAddress.value || !rawAmount.value || !orderId.value) return;
 
-const payButtonLabel = computed(() => {
-  if (payStatus.value === "processing") return "Processing…";
-  return `Pay ${displayAmount.value} USDC`;
-});
-
-const stepClass = (step: number) => {
-  if (currentStep.value > step) return "text-green-600 font-semibold";
-  if (currentStep.value === step) return "text-blue-600 font-semibold";
-  return "text-gray-400";
-};
-
-const shortAddress = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-const shortHash = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
-
-const pay = async () => {
-  if (!arc.isConnected.value || !arc.account.value) return;
-  payStatus.value = "processing";
-  payError.value = "";
-  currentStep.value = 2;
+  paymentStatus.value = "processing";
+  paymentMessage.value = "Processing payment...";
 
   try {
-    const amount = BigInt(params.value.rawAmount);
-    currentStep.value = 3;
-    const hash = await arc.payMerchant(
-      params.value.merchant as `0x${string}`,
-      params.value.orderId,
-      amount
-    );
-    txHash.value = hash;
-    payStatus.value = "success";
-    currentStep.value = 4;
-  } catch (e) {
-    payStatus.value = "error";
-    payError.value = e instanceof Error ? e.message : "Transaction failed.";
-    currentStep.value = 1;
+    const amountBigInt = BigInt(rawAmount.value);
+    const hash = await arc.payMerchant(merchantAddress.value, orderId.value, amountBigInt);
+    transactionHash.value = hash;
+    paymentStatus.value = "success";
+    paymentMessage.value = "Payment successful!";
+  } catch (e: any) {
+    paymentStatus.value = "error";
+    if (e.message?.includes("insufficient funds") || e.message?.includes("exceeds balance")) {
+      paymentMessage.value = "Insufficient USDC balance for gas.";
+    } else if (e.message?.includes("user rejected")) {
+      paymentMessage.value = "Transaction rejected. Please approve in your wallet.";
+    } else if (e.message?.includes("execution reverted")) {
+      paymentMessage.value = "Transaction reverted. Please check the payment details.";
+    } else if (e.message?.includes("chain") || e.message?.includes("network")) {
+      paymentMessage.value = `Please switch your wallet to ${networkName.value} (Chain ID: ${chainId}).`;
+    } else {
+      paymentMessage.value = `Payment failed: ${e.message || "Unknown error"}`;
+    }
   }
 };
 </script>
+
+<template>
+  <div class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
+    <div class="max-w-2xl mx-auto">
+      <!-- Header -->
+      <div class="relative flex items-center justify-center mb-8">
+        <button @click="router.push('/')" class="absolute left-0 p-2 -ml-2 flex items-center gap-2 text-white hover:text-purple-200 transition-colors">
+          <ArrowLeft :size="28" />
+          <span class="font-medium text-lg">Back</span>
+        </button>
+        <h1 class="text-3xl font-bold text-white">Payment</h1>
+      </div>
+
+      <!-- Payment Details Card -->
+      <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 mb-6">
+        <h2 class="text-2xl font-bold text-white mb-6">Payment Details</h2>
+        <div class="space-y-4">
+          <!-- Merchant -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <User :size="20" class="text-purple-300" />
+              <div>
+                <p class="text-purple-200 text-sm">Merchant</p>
+                <p class="text-white font-semibold">{{ merchantAddress ? formatAddress(merchantAddress) : "N/A" }}</p>
+              </div>
+            </div>
+            <button v-if="merchantAddress" @click="copyToClipboard(merchantAddress)" class="p-2 hover:bg-white/10 rounded-lg text-purple-300 transition-colors">
+              <Copy :size="18" />
+            </button>
+          </div>
+          <!-- Amount -->
+          <div class="flex items-center gap-3">
+            <DollarSign :size="20" class="text-purple-300" />
+            <div>
+              <p class="text-purple-200 text-sm">Amount</p>
+              <p class="text-white font-semibold">{{ amount }} USDC</p>
+            </div>
+          </div>
+          <!-- Order ID -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <Hash :size="20" class="text-purple-300" />
+              <div>
+                <p class="text-purple-200 text-sm">Order ID</p>
+                <p class="text-white font-semibold">{{ orderId }}</p>
+              </div>
+            </div>
+            <button v-if="orderId" @click="copyToClipboard(orderId)" class="p-2 hover:bg-white/10 rounded-lg text-purple-300 transition-colors">
+              <Copy :size="18" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wallet Card -->
+      <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold text-white">Wallet</h2>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium" :class="arc.isConnected.value ? 'text-green-400' : 'text-red-400'">
+              {{ arc.isConnected.value ? "Connected" : "Not Connected" }}
+            </span>
+            <div
+              :class="arc.isConnected.value ? 'bg-green-500' : 'bg-red-500'"
+              class="w-3 h-3 rounded-full"
+              :style="arc.isConnected.value ? 'box-shadow: 0 0 8px #22c55e' : 'box-shadow: 0 0 8px #ef4444'"
+            ></div>
+          </div>
+        </div>
+
+        <div v-if="arc.isConnected.value" class="space-y-4">
+          <div>
+            <p class="text-purple-200 text-sm">Connected Address</p>
+            <p class="text-white font-semibold">{{ formatAddress(arc.account.value || "") }}</p>
+          </div>
+          <div>
+            <p class="text-purple-200 text-sm">USDC Balance</p>
+            <p class="text-white font-semibold" :class="hasEnough ? '' : 'text-red-400'">
+              {{ formatBalance(arc.balance.value) }} USDC
+            </p>
+          </div>
+          <div v-if="!hasEnough" class="bg-red-500/20 border border-red-500 rounded-lg p-3 text-red-200 text-sm">
+            Insufficient USDC balance. You need {{ amount }} USDC.
+          </div>
+        </div>
+
+        <div v-else>
+          <p class="text-purple-200 mb-4 text-sm">Connect your wallet to proceed with payment</p>
+          <button
+            @click="showWalletModal = true"
+            :disabled="isConnecting"
+            class="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <Loader2 v-if="isConnecting" class="animate-spin" :size="20" />
+            <Wallet v-else :size="20" />
+            {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Status Card -->
+      <div
+        v-if="paymentStatus !== 'idle'"
+        :class="{
+          'bg-green-500/20 border-green-500': paymentStatus === 'success',
+          'bg-yellow-500/20 border-yellow-500': paymentStatus === 'processing',
+          'bg-red-500/20 border-red-500': paymentStatus === 'error',
+        }"
+        class="backdrop-blur-lg rounded-xl p-6 border mb-6"
+      >
+        <div class="flex items-center gap-3">
+          <CheckCircle2 v-if="paymentStatus === 'success'" :size="24" class="text-green-400" />
+          <Loader2 v-if="paymentStatus === 'processing'" :size="24" class="text-yellow-400 animate-spin" />
+          <XCircle v-if="paymentStatus === 'error'" :size="24" class="text-red-400" />
+          <span class="text-white font-semibold">{{ paymentMessage }}</span>
+        </div>
+        <div v-if="transactionHash" class="mt-4">
+          <p class="text-purple-200 text-sm">Transaction Hash</p>
+          <a
+            :href="`${explorerUrl}/tx/${transactionHash}`"
+            target="_blank"
+            class="text-blue-300 text-sm break-all hover:underline"
+          >{{ transactionHash }}</a>
+        </div>
+      </div>
+
+      <!-- Pay Button -->
+      <button
+        v-if="canProcessPayment"
+        @click="handlePayment"
+        :disabled="!hasEnough"
+        class="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl"
+      >
+        Pay {{ amount }} USDC
+      </button>
+
+      <!-- Success Actions -->
+      <div v-if="paymentStatus === 'success'" class="space-y-3 mt-4">
+        <button
+          @click="router.push(`/receipt?txHash=${transactionHash}`)"
+          class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-2"
+        >
+          <Receipt :size="20" />
+          View Receipt
+        </button>
+        <button
+          @click="router.push('/customer-history')"
+          class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 border border-white/20 flex items-center justify-center gap-2"
+        >
+          <History :size="20" />
+          View Payment History
+        </button>
+        <button
+          @click="router.push('/')"
+          class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 border border-white/20"
+        >
+          Return to Home
+        </button>
+      </div>
+    </div>
+
+    <!-- Wallet Modal -->
+    <WalletConnectModal
+      :is-open="showWalletModal"
+      :is-mobile="isMobileDevice"
+      @close="showWalletModal = false"
+      @select-wallet="handleWalletSelect"
+    />
+  </div>
+</template>

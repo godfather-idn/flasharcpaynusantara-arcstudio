@@ -1,163 +1,327 @@
+<script setup lang="ts">
+import { ref, onMounted } from "vue";
+import QRCode from "qrcode";
+import { ArrowLeft, Copy, Printer, ExternalLink, CheckCircle2, XCircle, Hash, DollarSign, Wallet, Calendar, Loader2, Download } from "lucide-vue-next";
+
+const route = useRoute();
+const router = useRouter();
+
+const explorerUrl = import.meta.env.VITE_ARC_EXPLORER_URL || "https://explorer.testnet.arc.io";
+
+// URL params
+const txHash = route.query.txHash as string | undefined;
+const orderId = route.query.orderId as string | undefined;
+const merchant = route.query.merchant as string | undefined;
+const amount = route.query.amount as string | undefined;
+const payer = route.query.payer as string | undefined;
+
+// State
+const loading = ref(true);
+const error = ref("");
+const qrCodeUrl = ref("");
+const showPrintDialog = ref(false);
+const paperSize = ref<"a4" | "thermal" | "letter">("a4");
+const includeQRCode = ref(true);
+const includeFullDetails = ref(true);
+const toast = ref<{ message: string; type: "success" | "error" } | null>(null);
+
+// Derived receipt data from URL params
+const receipt = ref<{
+  transactionHash: string;
+  orderId: string;
+  merchant: string;
+  payer: string;
+  amount: bigint;
+  timestamp: Date;
+  status: "success" | "error";
+} | null>(null);
+
+onMounted(async () => {
+  if (!txHash) {
+    error.value = "No transaction hash provided";
+    loading.value = false;
+    return;
+  }
+  try {
+    receipt.value = {
+      transactionHash: txHash,
+      orderId: orderId || "N/A",
+      merchant: merchant || "N/A",
+      payer: payer || "N/A",
+      amount: amount ? BigInt(amount) : 0n,
+      timestamp: new Date(),
+      status: "success",
+    };
+    // Generate QR code for explorer link
+    const explorerTxUrl = `${explorerUrl}/tx/${txHash}`;
+    qrCodeUrl.value = await QRCode.toDataURL(explorerTxUrl, {
+      width: 150, margin: 1,
+      color: { dark: "#000000", light: "#FFFFFF" },
+    });
+  } catch (e: any) {
+    error.value = e.message || "Failed to load receipt";
+  } finally {
+    loading.value = false;
+  }
+});
+
+const formatAddress = (addr: string) => {
+  if (!addr || addr === "N/A") return addr;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+};
+
+const formatUSDC = (amt: bigint) =>
+  (Number(amt) / 1_000_000).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const formatTimestamp = (date: Date) =>
+  date.toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+const showToast = (message: string, type: "success" | "error") => {
+  toast.value = { message, type };
+  setTimeout(() => { toast.value = null; }, 3000);
+};
+
+const copyToClipboard = async (text: string, label = "Text") => {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`${label} copied!`, "success");
+  } catch {
+    showToast("Failed to copy", "error");
+  }
+};
+
+const copyReceiptUrl = () => copyToClipboard(window.location.href, "Receipt URL");
+
+const viewOnExplorer = () => {
+  if (receipt.value) window.open(`${explorerUrl}/tx/${receipt.value.transactionHash}`, "_blank");
+};
+
+const downloadQRCode = () => {
+  if (!qrCodeUrl.value || !receipt.value) return;
+  const link = document.createElement("a");
+  link.href = qrCodeUrl.value;
+  link.download = `receipt-${receipt.value.transactionHash.slice(0, 8)}-qr.png`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast("QR code downloaded!", "success");
+};
+
+const executePrint = () => {
+  showPrintDialog.value = false;
+  const cssSize = paperSize.value === "a4" ? "210mm 297mm" : paperSize.value === "thermal" ? "80mm auto" : "216mm 279mm";
+  const cssMargin = paperSize.value === "thermal" ? "5mm" : "10mm";
+  const style = document.createElement("style");
+  style.textContent = `@page { size: ${cssSize}; margin: ${cssMargin}; } body { min-height: auto !important; } .min-h-screen { min-height: auto !important; }`;
+  document.head.appendChild(style);
+  window.print();
+  setTimeout(() => document.head.removeChild(style), 100);
+};
+</script>
+
 <template>
-  <div class="min-h-screen bg-gray-100">
-    <header class="bg-white border-b border-gray-200">
-      <div class="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-        <button @click="$router.back()" class="text-gray-500 hover:text-gray-800">← Back</button>
-        <h1 class="text-xl font-bold text-gray-900 flex-1 text-center">Payment Receipt</h1>
-        <button @click="share" class="text-blue-600 text-sm font-medium">Share</button>
+  <div class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
+    <div class="max-w-3xl mx-auto">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-8 print:hidden">
+        <button @click="router.back()" class="flex items-center gap-2 text-white hover:text-purple-200 transition-colors">
+          <ArrowLeft :size="24" />
+          <span>Back</span>
+        </button>
+        <h1 class="text-3xl font-bold text-white">Payment Receipt</h1>
+        <div></div>
       </div>
-    </header>
 
-    <div class="max-w-md mx-auto px-4 py-8">
-      <div class="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <!-- Top branding strip -->
-        <div class="bg-gradient-to-r from-blue-600 to-purple-700 px-8 py-5 text-white text-center">
-          <div class="text-2xl mb-1">⚡ FlashArcPay Nusantara</div>
-          <div class="text-xs text-white/70 uppercase tracking-widest">Transaction Receipt</div>
-        </div>
-
-        <div class="px-8 py-6 space-y-4">
-          <!-- Status badge -->
-          <div class="flex justify-center">
-            <span class="bg-green-100 text-green-800 font-semibold px-4 py-1 rounded-full text-sm">
-              ✅ Confirmed
-            </span>
-          </div>
-
-          <!-- QR code for receipt verification -->
-          <div v-if="receiptQr" class="flex justify-center my-4">
-            <img :src="receiptQr" alt="Receipt QR" class="w-28 h-28 rounded-lg border border-gray-200" />
-          </div>
-
-          <!-- Divider -->
-          <div class="border-t-2 border-dashed border-gray-200" />
-
-          <!-- Details -->
-          <div class="space-y-3 text-sm">
-            <div v-if="params.txHash" class="flex justify-between gap-2">
-              <span class="text-gray-500 flex-shrink-0">Receipt ID</span>
-              <span class="font-mono text-gray-800 text-right break-all">{{ shortHash(params.txHash) }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-gray-500">Order ID</span>
-              <span class="font-mono text-gray-800">{{ params.orderId }}</span>
-            </div>
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500 flex-shrink-0">From</span>
-              <span class="font-mono text-gray-800 text-right break-all">{{ shortAddress(params.payer) }}</span>
-            </div>
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500 flex-shrink-0">To</span>
-              <span class="font-mono text-gray-800 text-right break-all">{{ shortAddress(params.merchant) }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-gray-500">Date</span>
-              <span class="text-gray-800">{{ formatDate(Date.now()) }}</span>
-            </div>
-          </div>
-
-          <!-- Divider -->
-          <div class="border-t-2 border-dashed border-gray-200" />
-
-          <!-- Amount -->
-          <div class="flex justify-between items-center">
-            <span class="text-gray-700 font-semibold text-lg">Total Paid</span>
-            <span class="text-3xl font-bold text-gray-900">{{ displayAmount }} USDC</span>
-          </div>
-
-          <!-- Explorer link -->
-          <div v-if="params.txHash" class="text-center">
-            <a
-              :href="`https://explorer.testnet.arc.io/tx/${params.txHash}`"
-              target="_blank"
-              class="text-blue-600 hover:underline text-sm"
-            >
-              View on Arc Explorer →
-            </a>
-          </div>
-
-          <!-- Footer -->
-          <div class="border-t border-gray-200 pt-4 text-center text-xs text-gray-400">
-            Thank you for your payment
-            <br />Built with ❤️ for the Arc Network ecosystem
-          </div>
+      <!-- Loading -->
+      <div v-if="loading" class="bg-white/10 backdrop-blur-lg rounded-xl p-12 border border-white/20">
+        <div class="flex items-center justify-center">
+          <Loader2 :size="32" class="text-purple-400 animate-spin" />
+          <span class="ml-3 text-white">Loading receipt...</span>
         </div>
       </div>
 
-      <!-- Actions -->
-      <div class="flex gap-3 mt-6">
-        <NuxtLink
-          to="/scan"
-          class="flex-1 bg-blue-600 text-white rounded-xl py-3 font-semibold text-center hover:bg-blue-700 transition"
-        >
-          Scan Another QR
-        </NuxtLink>
-        <NuxtLink
-          to="/customer-history"
-          class="flex-1 bg-white border border-gray-300 text-gray-700 rounded-xl py-3 font-semibold text-center hover:bg-gray-50 transition"
-        >
-          My History
-        </NuxtLink>
+      <!-- Error -->
+      <div v-else-if="error" class="bg-red-500/20 backdrop-blur-lg rounded-xl p-12 border border-red-500/20">
+        <div class="text-center">
+          <XCircle :size="48" class="text-red-400 mx-auto mb-4" />
+          <h3 class="text-xl font-bold text-white mb-2">Error Loading Receipt</h3>
+          <p class="text-red-200">{{ error }}</p>
+        </div>
+      </div>
+
+      <!-- Receipt Content -->
+      <div v-else-if="receipt" class="space-y-6">
+        <!-- Transaction Info -->
+        <div class="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+          <h2 class="text-xl font-bold text-white mb-4 flex items-center gap-2">
+            <Hash :size="24" />
+            Transaction Info
+          </h2>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200">Transaction Hash</span>
+              <div class="flex items-center gap-2">
+                <span class="text-white font-mono text-sm">{{ formatAddress(receipt.transactionHash) }}</span>
+                <button @click="copyToClipboard(receipt.transactionHash, 'Transaction Hash')" class="text-purple-400 hover:text-purple-300 transition-colors print:hidden">
+                  <Copy :size="16" />
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200 flex items-center gap-2">
+                <Calendar :size="16" />
+                Timestamp
+              </span>
+              <span class="text-white">{{ formatTimestamp(receipt.timestamp) }}</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200">Status</span>
+              <div class="flex items-center gap-2">
+                <CheckCircle2 :size="20" class="text-green-400" />
+                <span class="text-green-400 font-medium">Success</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment Info -->
+        <div class="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+          <h2 class="text-xl font-bold text-white mb-4 flex items-center gap-2">
+            <DollarSign :size="24" />
+            Payment Info
+          </h2>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200">Amount</span>
+              <span class="text-white font-bold text-xl">{{ formatUSDC(receipt.amount) }} USDC</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200">Order ID</span>
+              <span class="text-white font-mono">{{ receipt.orderId }}</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200 flex items-center gap-2">
+                <Wallet :size="16" />
+                Merchant
+              </span>
+              <div class="flex items-center gap-2">
+                <span class="text-white font-mono text-sm">{{ formatAddress(receipt.merchant) }}</span>
+                <button v-if="receipt.merchant !== 'N/A'" @click="copyToClipboard(receipt.merchant, 'Merchant Address')" class="text-purple-400 hover:text-purple-300 transition-colors print:hidden">
+                  <Copy :size="16" />
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-purple-200 flex items-center gap-2">
+                <Wallet :size="16" />
+                Payer
+              </span>
+              <div class="flex items-center gap-2">
+                <span class="text-white font-mono text-sm">{{ formatAddress(receipt.payer) }}</span>
+                <button v-if="receipt.payer !== 'N/A'" @click="copyToClipboard(receipt.payer, 'Payer Address')" class="text-purple-400 hover:text-purple-300 transition-colors print:hidden">
+                  <Copy :size="16" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex flex-wrap gap-4 print:hidden">
+          <button @click="copyReceiptUrl" class="flex-1 min-w-[150px] bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <Copy :size="20" />
+            Share URL
+          </button>
+          <button @click="showPrintDialog = true" class="flex-1 min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <Printer :size="20" />
+            Print
+          </button>
+          <button @click="viewOnExplorer" class="flex-1 min-w-[150px] bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <ExternalLink :size="20" />
+            View on Explorer
+          </button>
+        </div>
+
+        <!-- QR Code -->
+        <div v-if="qrCodeUrl" class="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20 flex flex-col items-center">
+          <h3 class="text-lg font-bold text-white mb-4">Scan to Verify on Explorer</h3>
+          <div class="bg-white p-4 rounded-lg">
+            <img :src="qrCodeUrl" alt="Transaction QR Code" class="w-32 h-32" />
+          </div>
+          <p class="text-purple-200 text-sm mt-3 text-center">Scan this QR code to view transaction details on Arc Explorer</p>
+          <button @click="downloadQRCode" class="mt-4 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 print:hidden">
+            <Download :size="20" />
+            Download QR Code
+          </button>
+        </div>
+
+        <!-- Print Dialog -->
+        <div v-if="showPrintDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 print:hidden">
+          <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-900 mb-4">Select Paper Size</h3>
+            <div class="space-y-3 mb-6">
+              <button @click="paperSize = 'a4'" :class="paperSize === 'a4' ? 'bg-purple-100 border-purple-500' : 'bg-gray-50 border-gray-300'" class="w-full p-4 border-2 rounded-lg flex items-center gap-3 transition-colors">
+                <div class="w-8 h-8 border-2 border-gray-400 rounded flex items-center justify-center text-xs">A4</div>
+                <div class="text-left"><p class="font-semibold text-gray-900">A4 Paper</p><p class="text-sm text-gray-600">210mm x 297mm</p></div>
+              </button>
+              <button @click="paperSize = 'thermal'" :class="paperSize === 'thermal' ? 'bg-purple-100 border-purple-500' : 'bg-gray-50 border-gray-300'" class="w-full p-4 border-2 rounded-lg flex items-center gap-3 transition-colors">
+                <div class="w-8 h-8 border-2 border-gray-400 rounded flex items-center justify-center text-xs">80</div>
+                <div class="text-left"><p class="font-semibold text-gray-900">Thermal Printer</p><p class="text-sm text-gray-600">80mm (Receipt)</p></div>
+              </button>
+              <button @click="paperSize = 'letter'" :class="paperSize === 'letter' ? 'bg-purple-100 border-purple-500' : 'bg-gray-50 border-gray-300'" class="w-full p-4 border-2 rounded-lg flex items-center gap-3 transition-colors">
+                <div class="w-8 h-8 border-2 border-gray-400 rounded flex items-center justify-center text-xs">L</div>
+                <div class="text-left"><p class="font-semibold text-gray-900">Letter</p><p class="text-sm text-gray-600">216mm x 279mm</p></div>
+              </button>
+            </div>
+            <div v-if="paperSize === 'thermal'" class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-300">
+              <h4 class="font-semibold text-gray-900 mb-3">Print Options</h4>
+              <label class="flex items-center gap-2 mb-2 cursor-pointer">
+                <input type="checkbox" v-model="includeQRCode" class="w-4 h-4" />
+                <span class="text-sm text-gray-700">Include QR Code</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="includeFullDetails" class="w-4 h-4" />
+                <span class="text-sm text-gray-700">Include Full Details</span>
+              </label>
+            </div>
+            <div class="flex gap-3">
+              <button @click="showPrintDialog = false" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-900 font-bold py-3 px-6 rounded-lg transition-colors">Cancel</button>
+              <button @click="executePrint" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                <Printer :size="20" />
+                Print
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toast -->
+        <div v-if="toast" :class="['fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg transition-all duration-300 z-50', toast.type === 'success' ? 'bg-green-600' : 'bg-red-600']">
+          <div class="flex items-center gap-2 text-white">
+            <CheckCircle2 v-if="toast.type === 'success'" :size="20" />
+            <XCircle v-else :size="20" />
+            <span>{{ toast.message }}</span>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center py-8 border-t border-white/20">
+          <h3 class="text-2xl font-bold text-white mb-2">FlashArcPay Nusantara</h3>
+          <p class="text-purple-200">Thank you for your payment</p>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
-<script setup lang="ts">
-import QRCode from "qrcode";
-
-const route = useRoute();
-
-const params = computed(() => ({
-  txHash: (route.query.txHash as string) || "",
-  merchant: (route.query.merchant as string) || "",
-  orderId: (route.query.orderId as string) || "",
-  rawAmount: (route.query.amount as string) || "0",
-  payer: (route.query.payer as string) || "",
-}));
-
-const receiptQr = ref("");
-
-const displayAmount = computed(() => {
-  try {
-    const raw = BigInt(params.value.rawAmount);
-    return (Number(raw) / 1_000_000).toFixed(6);
-  } catch {
-    return "0.000000";
-  }
-});
-
-const shortAddress = (addr: string) =>
-  addr ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : "—";
-const shortHash = (hash: string) =>
-  hash ? `${hash.slice(0, 12)}…${hash.slice(-8)}` : "—";
-
-const formatDate = (ts: number) =>
-  new Date(ts).toLocaleString("id-ID", {
-    dateStyle: "long",
-    timeStyle: "medium",
-  });
-
-const share = async () => {
-  const text = `FlashArcPay Receipt\nOrder: ${params.value.orderId}\nAmount: ${displayAmount.value} USDC\nTx: ${params.value.txHash}`;
-  if (navigator.share) {
-    await navigator.share({ title: "FlashArcPay Receipt", text });
-  } else {
-    await navigator.clipboard.writeText(text);
-    alert("Receipt details copied to clipboard!");
-  }
-};
-
-onMounted(async () => {
-  if (params.value.txHash) {
-    try {
-      receiptQr.value = await QRCode.toDataURL(
-        `https://explorer.testnet.arc.io/tx/${params.value.txHash}`,
-        { width: 112, margin: 1 }
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-});
-</script>
+<style scoped>
+@media print {
+  @page { size: auto; margin: 0; }
+  body { background: white !important; color: #000 !important; min-height: auto !important; }
+  .min-h-screen { background: white !important; padding: 20px !important; min-height: auto !important; }
+  button { display: none !important; }
+  .max-w-3xl { max-width: 100% !important; margin: 0 auto !important; }
+  .bg-white\/10 { background: white !important; border: 1px solid #e5e7eb !important; }
+  .text-white { color: #111827 !important; }
+  .text-purple-200 { color: #6b7280 !important; }
+}
+</style>

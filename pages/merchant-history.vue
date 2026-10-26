@@ -1,141 +1,294 @@
-<template>
-  <div class="min-h-screen bg-gray-50">
-    <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div class="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-        <NuxtLink to="/merchant" class="text-gray-500 hover:text-gray-800">← Back</NuxtLink>
-        <h1 class="text-xl font-bold text-gray-900 flex-1 text-center">Payment History</h1>
-        <select v-model="filter" class="text-sm border border-gray-200 rounded-lg px-2 py-1">
-          <option value="">All</option>
-          <option value="success">Success</option>
-          <option value="pending">Pending</option>
-          <option value="failed">Failed</option>
-        </select>
-      </div>
-    </header>
-
-    <div class="max-w-lg mx-auto px-4 py-6 space-y-4">
-      <!-- Wallet prompt -->
-      <div v-if="!arc.isConnected.value" class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-center">
-        <p class="text-gray-500 mb-4">Connect your wallet to view merchant history</p>
-        <button
-          @click="arc.connectWallet"
-          :disabled="arc.isLoading.value"
-          class="bg-blue-600 text-white rounded-lg px-6 py-3 font-semibold hover:bg-blue-700 disabled:opacity-50"
-        >
-          {{ arc.isLoading.value ? "Connecting…" : "Connect Wallet" }}
-        </button>
-      </div>
-
-      <template v-else>
-        <!-- Stats -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-            <div class="text-2xl font-bold text-blue-700">{{ stats.count }}</div>
-            <div class="text-xs text-blue-600 mt-1">Payments</div>
-          </div>
-          <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-            <div class="text-2xl font-bold text-green-700">{{ stats.total }}</div>
-            <div class="text-xs text-green-600 mt-1">USDC Received</div>
-          </div>
-          <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 text-center">
-            <div class="text-2xl font-bold text-purple-700">{{ stats.successRate }}%</div>
-            <div class="text-xs text-purple-600 mt-1">Success Rate</div>
-          </div>
-        </div>
-
-        <!-- Empty state -->
-        <div v-if="records.length === 0" class="bg-white rounded-xl shadow-sm border border-gray-200 p-10 text-center">
-          <div class="text-5xl mb-3">🧾</div>
-          <div class="font-semibold text-gray-700">No payments yet</div>
-          <div class="text-gray-400 text-sm mt-1">Payments will appear here after customers pay</div>
-          <NuxtLink to="/merchant" class="inline-block mt-4 bg-blue-600 text-white rounded-lg px-5 py-2 text-sm font-semibold hover:bg-blue-700">
-            Create Payment QR
-          </NuxtLink>
-        </div>
-
-        <!-- Records list -->
-        <div v-else class="space-y-3">
-          <div
-            v-for="record in records"
-            :key="record.id"
-            class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition cursor-pointer"
-            @click="record.txHash && openExplorer(record.txHash)"
-          >
-            <div class="flex items-start justify-between">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono text-sm text-gray-800 truncate">{{ record.orderId }}</span>
-                  <span :class="badgeClass(record.status)" class="px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0">
-                    {{ record.status }}
-                  </span>
-                </div>
-                <div class="text-xs text-gray-500">
-                  From: {{ shortAddress(record.payer) }}
-                </div>
-                <div class="text-xs text-gray-400 mt-0.5">
-                  {{ formatDate(record.timestamp) }}
-                </div>
-                <div v-if="record.txHash" class="text-xs text-blue-500 mt-0.5 font-mono">
-                  Tx: {{ shortHash(record.txHash) }}
-                </div>
-              </div>
-              <div class="text-right ml-3">
-                <div class="font-bold text-gray-900">{{ history.formatAmount(record.amount) }}</div>
-                <div class="text-xs text-gray-500">USDC</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
+import { ref, computed, onMounted } from "vue";
+import { ArrowLeft, DollarSign, Calendar, TrendingUp, ExternalLink, RefreshCw, Wallet, Search, X, Filter, Eye, EyeOff } from "lucide-vue-next";
+
+const router = useRouter();
 const arc = useArcAppKit();
 const history = usePaymentHistory();
 
-const filter = ref("");
+const chainId = Number(import.meta.env.VITE_ARC_CHAIN_ID || 5042002);
+const isMainnet = computed(() => chainId === 5042);
+const networkName = computed(() => isMainnet.value ? "Arc Mainnet" : "Arc Testnet");
+const explorerUrl = import.meta.env.VITE_ARC_EXPLORER_URL || "https://explorer.testnet.arc.io";
 
-const records = computed(() => {
+// State
+const loading = ref(false);
+const showFilters = ref(false);
+const searchQuery = ref("");
+const dateFrom = ref("");
+const dateTo = ref("");
+const hideBalance = ref(false);
+const showWalletModal = ref(false);
+const isMobileDevice = ref(false);
+const connectionError = ref("");
+const showInstructions = ref(false);
+
+const isMobileCheck = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+};
+
+const transactions = computed(() => {
   if (!arc.account.value) return [];
-  return history.getPayments(arc.account.value, {
-    type: "merchant",
-    status: filter.value || undefined,
-  });
+  return history.getPayments(arc.account.value, { type: "merchant" });
+});
+
+const filteredTransactions = computed(() => {
+  let list = transactions.value;
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase();
+    list = list.filter(tx =>
+      tx.orderId.toLowerCase().includes(q) ||
+      (tx.txHash || "").toLowerCase().includes(q)
+    );
+  }
+  if (dateFrom.value) {
+    const from = new Date(dateFrom.value).getTime();
+    list = list.filter(tx => tx.timestamp >= from);
+  }
+  if (dateTo.value) {
+    const to = new Date(dateTo.value).getTime() + 86400000;
+    list = list.filter(tx => tx.timestamp <= to);
+  }
+  return list;
 });
 
 const stats = computed(() => {
-  if (!arc.account.value) return { count: 0, total: "0.00", successRate: 0 };
-  const all = history.getPayments(arc.account.value, { type: "merchant" });
-  const succeeded = all.filter((r) => r.status === "success");
-  const totalRaw = succeeded.reduce(
-    (sum, r) => sum + BigInt(r.amount),
-    0n
-  );
-  return {
-    count: all.length,
-    total: history.formatAmount(totalRaw.toString()),
-    successRate: all.length ? Math.round((succeeded.length / all.length) * 100) : 0,
-  };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const all = filteredTransactions.value;
+  const total = all.reduce((sum, tx) => sum + BigInt(tx.amount), 0n);
+  const todayTxs = all.filter(tx => tx.timestamp >= todayMs);
+  const todayTotal = todayTxs.reduce((sum, tx) => sum + BigInt(tx.amount), 0n);
+  return { total, today: todayTotal, count: all.length, todayCount: todayTxs.length };
 });
 
-const badgeClass = (status: string) => {
-  if (status === "success") return "bg-green-100 text-green-800";
-  if (status === "pending") return "bg-yellow-100 text-yellow-800";
-  return "bg-red-100 text-red-800";
+const formatUSDC = (amount: bigint) => {
+  return (Number(amount) / 1_000_000).toFixed(2);
 };
 
-const shortAddress = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-const shortHash = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
+const formatAddress = (addr: string) => {
+  if (!addr) return "";
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+};
 
-const formatDate = (ts: number) =>
-  new Date(ts).toLocaleString("id-ID", {
-    dateStyle: "medium",
-    timeStyle: "short",
+const formatTimestamp = (ts: number) => {
+  return new Date(ts).toLocaleString("en-US", {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
   });
-
-const openExplorer = (txHash: string) => {
-  window.open(`https://explorer.testnet.arc.io/tx/${txHash}`, "_blank");
 };
+
+const clearFilters = () => {
+  searchQuery.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+};
+
+const viewReceipt = (txHash: string) => {
+  router.push(`/receipt?txHash=${txHash}`);
+};
+
+const handleWalletSelect = async () => {
+  showWalletModal.value = false;
+  loading.value = true;
+  try {
+    await arc.connectWallet();
+  } catch (e: any) {
+    connectionError.value = e.message || "Failed to connect wallet";
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(async () => {
+  isMobileDevice.value = isMobileCheck();
+  try {
+    await arc.connectWallet();
+  } catch (e: any) {
+    connectionError.value = e.message || "Failed to connect wallet";
+  }
+});
 </script>
+
+<template>
+  <div class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4 pb-8">
+    <div class="max-w-6xl mx-auto">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-6 mt-4">
+        <button @click="router.push('/merchant')" class="flex items-center gap-2 text-white hover:text-purple-200 transition-colors text-lg">
+          <ArrowLeft :size="24" />
+          <span class="font-medium">Back</span>
+        </button>
+        <h1 class="text-2xl font-bold text-white">Merchant History</h1>
+        <div class="flex items-center gap-2">
+          <button @click="hideBalance = !hideBalance" class="p-2 text-white hover:bg-white/10 rounded-lg transition-colors" :title="hideBalance ? 'Show balances' : 'Hide balances'">
+            <Eye v-if="hideBalance" :size="20" />
+            <EyeOff v-else :size="20" />
+          </button>
+          <button @click="loading = true; arc.fetchBalance().finally(() => loading = false)" class="p-2 text-white hover:bg-white/10 rounded-lg transition-colors" title="Refresh">
+            <RefreshCw :size="20" :class="{ 'animate-spin': loading }" />
+          </button>
+        </div>
+      </div>
+
+      <!-- Connection Status -->
+      <div class="bg-white/10 backdrop-blur-lg rounded-xl p-4 mb-6 border border-white/20">
+        <div v-if="arc.isConnected.value" class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-green-500" style="box-shadow: 0 0 8px #22c55e"></div>
+            <span class="text-white font-medium">Connected</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs bg-purple-600/50 border border-purple-400/50 px-2 py-1 rounded-md text-white">{{ networkName }}</span>
+            <span class="text-white text-sm font-mono">{{ formatAddress(arc.account.value || "") }}</span>
+          </div>
+        </div>
+        <div v-else class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-red-500" style="box-shadow: 0 0 8px #ef4444"></div>
+            <span class="text-white font-medium">Not Connected</span>
+          </div>
+          <button @click="showWalletModal = true" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-full transition-colors flex items-center gap-2 text-xs">
+            <Wallet :size="14" />
+            Connect Wallet
+          </button>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div v-if="arc.isConnected.value" class="bg-white/10 backdrop-blur-lg rounded-xl p-4 mb-6 border border-white/20">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-white flex items-center gap-2">
+            <Filter :size="20" />
+            Filters
+          </h3>
+          <button @click="showFilters = !showFilters" class="text-purple-200 hover:text-white transition-colors">
+            {{ showFilters ? 'Hide' : 'Show' }}
+          </button>
+        </div>
+        <div v-if="showFilters" class="space-y-4">
+          <div class="flex gap-2">
+            <div class="flex-1 relative">
+              <Search :size="20" class="absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
+              <input v-model="searchQuery" type="text" placeholder="Search by Order ID or Tx Hash" class="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-4 py-2 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <button v-if="searchQuery" @click="searchQuery = ''" class="text-purple-400 hover:text-white transition-colors">
+              <X :size="20" />
+            </button>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-purple-200 text-sm mb-1">From Date</label>
+              <input v-model="dateFrom" type="date" class="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+              <label class="block text-purple-200 text-sm mb-1">To Date</label>
+              <input v-model="dateTo" type="date" class="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+          </div>
+          <button @click="clearFilters" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">Clear All Filters</button>
+        </div>
+      </div>
+
+      <!-- Stats Cards -->
+      <div v-if="arc.isConnected.value" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="bg-gradient-to-br from-green-500/20 to-green-600/20 backdrop-blur-lg rounded-xl p-6 border border-green-500/30">
+          <div class="flex items-center gap-3 mb-2">
+            <DollarSign :size="24" class="text-green-400" />
+            <span class="text-green-200 text-sm font-medium">Total Received</span>
+          </div>
+          <p class="text-3xl font-bold text-white">{{ hideBalance ? '••••' : formatUSDC(stats.total) }} USDC</p>
+        </div>
+        <div class="bg-gradient-to-br from-blue-500/20 to-blue-600/20 backdrop-blur-lg rounded-xl p-6 border border-blue-500/30">
+          <div class="flex items-center gap-3 mb-2">
+            <Calendar :size="24" class="text-blue-400" />
+            <span class="text-blue-200 text-sm font-medium">Today's Received</span>
+          </div>
+          <p class="text-3xl font-bold text-white">{{ hideBalance ? '••••' : formatUSDC(stats.today) }} USDC</p>
+        </div>
+        <div class="bg-gradient-to-br from-purple-500/20 to-purple-600/20 backdrop-blur-lg rounded-xl p-6 border border-purple-500/30">
+          <div class="flex items-center gap-3 mb-2">
+            <TrendingUp :size="24" class="text-purple-400" />
+            <span class="text-purple-200 text-sm font-medium">Total Transactions</span>
+          </div>
+          <p class="text-3xl font-bold text-white">{{ stats.count }}</p>
+        </div>
+        <div class="bg-gradient-to-br from-orange-500/20 to-orange-600/20 backdrop-blur-lg rounded-xl p-6 border border-orange-500/30">
+          <div class="flex items-center gap-3 mb-2">
+            <Calendar :size="24" class="text-orange-400" />
+            <span class="text-orange-200 text-sm font-medium">Today's Transactions</span>
+          </div>
+          <p class="text-3xl font-bold text-white">{{ stats.todayCount }}</p>
+        </div>
+      </div>
+
+      <!-- Transaction Table -->
+      <div v-if="arc.isConnected.value && filteredTransactions.length > 0" class="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 overflow-hidden">
+        <div class="p-6 border-b border-white/20">
+          <h2 class="text-xl font-bold text-white">
+            Recent Transactions
+            <span v-if="filteredTransactions.length !== transactions.length" class="text-purple-200 text-sm ml-2">
+              ({{ filteredTransactions.length }} of {{ transactions.length }})
+            </span>
+          </h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-white/5">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Order ID</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Amount</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Payer</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Date</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Status</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-purple-200 uppercase tracking-wider">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-white/10">
+              <tr v-for="tx in filteredTransactions" :key="tx.id" class="hover:bg-white/5 transition-colors">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-white">{{ tx.orderId }}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">{{ history.formatAmount(tx.amount) }} USDC</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-purple-200">{{ formatAddress(tx.payer || tx.merchant || "") }}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-purple-200">{{ formatTimestamp(tx.timestamp) }}</td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span :class="tx.status === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
+                    {{ tx.status === 'success' ? 'Success' : tx.status }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                  <button v-if="tx.txHash" @click="viewReceipt(tx.txHash)" class="text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1">
+                    <ExternalLink :size="16" />
+                    View Receipt
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div v-else-if="arc.isConnected.value && filteredTransactions.length === 0" class="bg-white/10 backdrop-blur-lg rounded-xl p-12 border border-white/20 text-center">
+        <DollarSign :size="48" class="text-purple-400 mx-auto mb-4" />
+        <h3 class="text-xl font-bold text-white mb-2">No Payments Found</h3>
+        <p class="text-purple-200">{{ transactions.length === 0 ? 'Start accepting payments to see your transaction history here.' : 'Try adjusting your filters to see more transactions.' }}</p>
+      </div>
+
+      <!-- Not Connected -->
+      <div v-else-if="!arc.isConnected.value" class="bg-white/10 backdrop-blur-lg rounded-xl p-12 border border-white/20 text-center">
+        <Wallet :size="48" class="text-purple-400 mx-auto mb-4" />
+        <h3 class="text-xl font-bold text-white mb-2">Connect Your Wallet</h3>
+        <p class="text-purple-200">Connect your wallet to view your payment history.</p>
+      </div>
+    </div>
+
+    <WalletConnectModal
+      :is-open="showWalletModal"
+      :is-mobile="isMobileDevice"
+      @close="showWalletModal = false"
+      @select-wallet="handleWalletSelect"
+    />
+  </div>
+</template>

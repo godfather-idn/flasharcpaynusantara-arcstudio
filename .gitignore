@@ -17,3 +17,11 @@ contracts/.env
 # misc
 *.log
 .DS_Store
+
+# reference repo (cloned for UI reference only)
+reference-ui/
+
+# foundry build artifacts
+contracts/out/
+cache/
+contracts/package-lock.json

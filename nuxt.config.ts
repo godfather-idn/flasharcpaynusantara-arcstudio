@@ -36,8 +36,29 @@ export default defineNuxtConfig({
     define: {
       global: "globalThis",
     },
+    resolve: {
+      alias: {
+        "#app-manifest": "/home/user/app/.nuxt/manifest/latest.json",
+      },
+    },
+    server: {
+      allowedHosts: true,
+      fs: {
+        strict: false,
+      },
+      hmr: {
+        host: "i6ae5wg74ra3pkmnfo4z2.preview.studio.arc.io",
+        protocol: "wss",
+        clientPort: 443,
+      },
+    },
     optimizeDeps: {
-      include: ["viem", "@circle-fin/app-kit", "@circle-fin/adapter-viem-v2"],
+      include: [
+        "viem",
+        "viem/chains",
+        "@circle-fin/app-kit",
+        "@circle-fin/adapter-viem-v2",
+      ],
     },
   },
 

@@ -1,83 +1,87 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Laptop, ScanLine, History, ChevronRight } from 'lucide-vue-next'
+
+const activeTab = ref<'customer' | 'merchant'>('customer')
+</script>
+
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-600 via-blue-700 to-purple-800 flex flex-col">
-    <!-- Hero -->
-    <div class="flex-1 flex flex-col items-center justify-center px-4 py-16">
-      <!-- Glass card -->
-      <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-8 max-w-lg w-full text-white shadow-2xl">
-        <!-- Logo + title -->
-        <div class="flex items-center justify-center gap-3 mb-4">
-          <span class="text-4xl">⚡</span>
-          <div>
-            <h1 class="text-3xl font-bold leading-tight">FlashArcPay</h1>
-            <p class="text-sm font-semibold tracking-widest text-blue-200 uppercase">Nusantara</p>
-          </div>
-        </div>
-        <p class="text-center text-white/80 text-sm mb-8 leading-relaxed">
-          Indonesian QRIS-Standard Payment Experience<br />
-          Built Native on Arc Network via Circle Arc App Kit
-        </p>
-
-        <!-- Feature cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
-          <div
-            v-for="feature in features"
-            :key="feature.title"
-            class="bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl p-4 text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
-          >
-            <div class="text-2xl mb-1">{{ feature.icon }}</div>
-            <div class="font-semibold text-sm">{{ feature.title }}</div>
-            <div class="text-xs text-white/70 mt-1">{{ feature.desc }}</div>
-          </div>
-        </div>
-
-        <!-- CTA buttons -->
-        <div class="flex flex-col gap-3">
-          <NuxtLink
-            to="/merchant"
-            class="bg-white text-blue-700 font-bold rounded-xl py-4 text-center text-lg hover:bg-blue-50 transition-all duration-200 shadow-md hover:shadow-lg"
-          >
-            🏪 Start as Merchant
-          </NuxtLink>
-          <NuxtLink
-            to="/scan"
-            class="bg-white/20 border-2 border-white/40 text-white font-bold rounded-xl py-4 text-center text-lg hover:bg-white/30 transition-all duration-200"
-          >
-            📷 Scan to Pay
-          </NuxtLink>
-        </div>
+  <div class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+    <div class="max-w-md w-full">
+      <!-- Logo + Title -->
+      <div class="text-center mb-8 flex flex-col items-center">
+        <img src="~/assets/logo.png" alt="FlashArcPay Logo" class="w-32 h-auto mb-4 drop-shadow-xl" />
+        <h1 class="text-3xl font-bold text-white mb-2">FlashArcPay</h1>
+        <p class="text-sm text-purple-200 px-4">Indonesian QRIS-Standard Payment on Arc Network</p>
       </div>
 
-      <!-- Stats row -->
-      <div class="flex gap-6 mt-8 text-white/70 text-sm">
-        <div class="text-center">
-          <div class="font-bold text-white text-xl">6</div>
-          <div>Decimals</div>
-        </div>
-        <div class="text-center">
-          <div class="font-bold text-white text-xl">&lt;2s</div>
-          <div>Settlement</div>
-        </div>
-        <div class="text-center">
-          <div class="font-bold text-white text-xl">0</div>
-          <div>Token Friction</div>
-        </div>
+      <!-- Tab Switcher -->
+      <div class="flex bg-white/10 backdrop-blur-md rounded-xl p-1 mb-8 shadow-lg">
+        <button
+          @click="activeTab = 'customer'"
+          :class="['flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all duration-300', activeTab === 'customer' ? 'bg-white text-purple-900 shadow-sm' : 'text-white/70 hover:text-white']"
+        >
+          Customer
+        </button>
+        <button
+          @click="activeTab = 'merchant'"
+          :class="['flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all duration-300', activeTab === 'merchant' ? 'bg-white text-purple-900 shadow-sm' : 'text-white/70 hover:text-white']"
+        >
+          Merchant
+        </button>
       </div>
-    </div>
 
-    <!-- Footer -->
-    <div class="text-center py-4 text-white/50 text-xs">
-      Built with ❤️ for the Arc Network ecosystem &nbsp;·&nbsp;
-      <NuxtLink to="/merchant-history" class="hover:text-white/80 underline">Merchant History</NuxtLink>
-      &nbsp;·&nbsp;
-      <NuxtLink to="/customer-history" class="hover:text-white/80 underline">My Payments</NuxtLink>
+      <div class="space-y-4">
+        <!-- Customer Menus -->
+        <template v-if="activeTab === 'customer'">
+          <NuxtLink to="/scan" class="group flex items-center bg-white/10 backdrop-blur-lg rounded-2xl p-4 hover:bg-white/20 active:scale-[0.98] transition-all duration-300 border border-white/20 shadow-lg hover:shadow-blue-500/20">
+            <div class="w-14 h-14 bg-blue-500 rounded-xl flex items-center justify-center mr-4 shrink-0 group-hover:scale-110 transition-transform duration-300 shadow-md">
+              <ScanLine :size="28" class="text-white" />
+            </div>
+            <div class="flex-1">
+              <h2 class="text-xl font-bold text-white mb-1">Scan QR</h2>
+              <p class="text-sm text-purple-200">Scan code to pay</p>
+            </div>
+            <ChevronRight :size="24" class="text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all duration-300" />
+          </NuxtLink>
+
+          <NuxtLink to="/customer-history" class="group flex items-center bg-white/10 backdrop-blur-lg rounded-2xl p-4 hover:bg-white/20 active:scale-[0.98] transition-all duration-300 border border-white/20 shadow-lg hover:shadow-orange-500/20">
+            <div class="w-14 h-14 bg-orange-500 rounded-xl flex items-center justify-center mr-4 shrink-0 group-hover:scale-110 transition-transform duration-300 shadow-md">
+              <History :size="28" class="text-white" />
+            </div>
+            <div class="flex-1">
+              <h2 class="text-xl font-bold text-white mb-1">History</h2>
+              <p class="text-sm text-purple-200">Your transactions</p>
+            </div>
+            <ChevronRight :size="24" class="text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all duration-300" />
+          </NuxtLink>
+        </template>
+
+        <!-- Merchant Menus -->
+        <template v-if="activeTab === 'merchant'">
+          <NuxtLink to="/merchant" class="group flex items-center bg-white/10 backdrop-blur-lg rounded-2xl p-4 hover:bg-white/20 active:scale-[0.98] transition-all duration-300 border border-white/20 shadow-lg hover:shadow-purple-500/20">
+            <div class="w-14 h-14 bg-purple-500 rounded-xl flex items-center justify-center mr-4 shrink-0 group-hover:scale-110 transition-transform duration-300 shadow-md">
+              <Laptop :size="28" class="text-white" />
+            </div>
+            <div class="flex-1">
+              <h2 class="text-xl font-bold text-white mb-1">Merchant POS</h2>
+              <p class="text-sm text-purple-200">Create QR code</p>
+            </div>
+            <ChevronRight :size="24" class="text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all duration-300" />
+          </NuxtLink>
+
+          <NuxtLink to="/merchant-history" class="group flex items-center bg-white/10 backdrop-blur-lg rounded-2xl p-4 hover:bg-white/20 active:scale-[0.98] transition-all duration-300 border border-white/20 shadow-lg hover:shadow-green-500/20">
+            <div class="w-14 h-14 bg-green-500 rounded-xl flex items-center justify-center mr-4 shrink-0 group-hover:scale-110 transition-transform duration-300 shadow-md">
+              <History :size="28" class="text-white" />
+            </div>
+            <div class="flex-1">
+              <h2 class="text-xl font-bold text-white mb-1">History</h2>
+              <p class="text-sm text-purple-200">Incoming payments</p>
+            </div>
+            <ChevronRight :size="24" class="text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all duration-300" />
+          </NuxtLink>
+        </template>
+      </div>
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-const features = [
-  { icon: "⚡", title: "Instant Payments", desc: "Sub-2s onchain settlement" },
-  { icon: "🌉", title: "Cross-Chain", desc: "Unified USDC liquidity" },
-  { icon: "✅", title: "Zero Friction", desc: "USDC IS the gas token" },
-];
-</script>
