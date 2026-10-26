@@ -5,6 +5,7 @@ import { ArrowLeft, Wallet, CheckCircle2, Loader2, XCircle, DollarSign, Hash, Us
 const router = useRouter();
 const route = useRoute();
 const arc = useArcAppKit();
+const paymentHistory = usePaymentHistory();
 
 const chainId = Number(import.meta.env.VITE_ARC_CHAIN_ID || 5042002);
 const isMainnet = computed(() => chainId === 5042);
@@ -121,6 +122,20 @@ const handlePayment = async () => {
     transactionHash.value = hash;
     paymentStatus.value = "success";
     paymentMessage.value = "Payment successful!";
+
+    // Save to customer payment history
+    if (arc.account.value) {
+      paymentHistory.addPayment(arc.account.value, {
+        type: "customer",
+        orderId: orderId.value,
+        merchant: merchantAddress.value,
+        payer: arc.account.value,
+        amount: amountBigInt.toString(),
+        timestamp: Date.now(),
+        status: "success",
+        txHash: hash,
+      });
+    }
   } catch (e: any) {
     paymentStatus.value = "error";
     if (e.message?.includes("insufficient funds") || e.message?.includes("exceeds balance")) {
@@ -276,7 +291,7 @@ const handlePayment = async () => {
       <!-- Success Actions -->
       <div v-if="paymentStatus === 'success'" class="space-y-3 mt-4">
         <button
-          @click="router.push(`/receipt?txHash=${transactionHash}`)"
+          @click="router.push(`/receipt?txHash=${transactionHash}&merchant=${merchantAddress}&orderId=${orderId}&amount=${rawAmount}&payer=${arc.account.value}`)"
           class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-2"
         >
           <Receipt :size="20" />

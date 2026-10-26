@@ -6,6 +6,7 @@ import type { Address, Hash as TxHash } from "viem";
 
 const router = useRouter();
 const arc = useArcAppKit();
+const paymentHistory = usePaymentHistory();
 
 const chainId = Number(import.meta.env.VITE_ARC_CHAIN_ID || 5042002);
 const isMainnet = computed(() => chainId === 5042);
@@ -88,10 +89,24 @@ const generateQR = async () => {
     paymentMessage.value = "Waiting for payment...";
 
     if (cleanupWatcher) cleanupWatcher();
-    cleanupWatcher = arc.watchPayments(arc.account.value as Address, (event) => {
+    const merchantAddr = arc.account.value as Address;
+    cleanupWatcher = arc.watchPayments(merchantAddr, (event) => {
       if (event.orderId === orderId.value) {
         paymentStatus.value = "success";
         paymentMessage.value = `Payment received! ${arc.formatUSDC(event.amount)} USDC`;
+
+        // Save to merchant payment history
+        paymentHistory.addPayment(merchantAddr, {
+          type: "merchant",
+          orderId: event.orderId,
+          merchant: merchantAddr,
+          payer: event.payer,
+          amount: event.amount.toString(),
+          timestamp: Date.now(),
+          status: "success",
+          txHash: event.txHash,
+        });
+
         if (cleanupWatcher) { cleanupWatcher(); cleanupWatcher = null; }
       }
     });
