@@ -315,13 +315,14 @@ const executePrint = () => {
 
 <style scoped>
 @media print {
-  @page { size: auto; margin: 0; }
+  @page { size: auto; margin: 10mm; }
   body { background: white !important; color: #000 !important; min-height: auto !important; }
   .min-h-screen { background: white !important; padding: 20px !important; min-height: auto !important; }
-  button { display: none !important; }
   .max-w-3xl { max-width: 100% !important; margin: 0 auto !important; }
   .bg-white\/10 { background: white !important; border: 1px solid #e5e7eb !important; }
   .text-white { color: #111827 !important; }
   .text-purple-200 { color: #6b7280 !important; }
+  /* Hide only elements marked print:hidden — do NOT hide all buttons */
+  .print\:hidden { display: none !important; }
 }
 </style>

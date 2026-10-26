@@ -90,18 +90,20 @@ const FLASH_ARC_PAY_ABI = [
   },
 ] as const;
 
+// ── Singleton viem clients shared across all page instances ──────────────────
+let _publicClient: PublicClient | null = null;
+let _walletClient: WalletClient | null = null;
+
 export const useArcAppKit = () => {
   const config = useRuntimeConfig();
   const chain = getArcChain();
 
-  const isConnected = ref(false);
-  const account = ref<Address | null>(null);
-  const balance = ref<bigint>(0n);
-  const isLoading = ref(false);
-  const error = ref<string | null>(null);
-
-  let publicClient: PublicClient | null = null;
-  let walletClient: WalletClient | null = null;
+  // useState ensures state is shared across all composable instances in one session
+  const isConnected = useState<boolean>("arc_isConnected", () => false);
+  const account = useState<Address | null>("arc_account", () => null);
+  const balance = useState<bigint>("arc_balance", () => 0n);
+  const isLoading = useState<boolean>("arc_isLoading", () => false);
+  const error = useState<string | null>("arc_error", () => null);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -168,6 +170,42 @@ export const useArcAppKit = () => {
 
   // ── Wallet ────────────────────────────────────────────────────────────────
 
+  const _setupClients = (addr: Address) => {
+    const provider = getProvider();
+    if (!provider) return;
+    _publicClient = createPublicClient({
+      chain,
+      transport: http(chain.rpcUrls.default.http[0]),
+    });
+    _walletClient = createWalletClient({
+      chain,
+      account: addr,
+      transport: custom(provider),
+    });
+    account.value = addr;
+    isConnected.value = true;
+  };
+
+  /**
+   * checkConnection — silently detect an already-connected wallet (no popup).
+   * Call this in onMounted on pages that need to show wallet state immediately.
+   */
+  const checkConnection = async (): Promise<void> => {
+    if (isConnected.value) return; // already connected
+    if (typeof window === "undefined") return;
+    const provider = getProvider();
+    if (!provider?.request) return;
+    try {
+      const accounts = (await provider.request({ method: "eth_accounts" })) as Address[];
+      if (accounts?.length) {
+        _setupClients(accounts[0]);
+        await fetchBalance();
+      }
+    } catch {
+      /* no wallet or not connected — silent */
+    }
+  };
+
   const connectWallet = async (): Promise<void> => {
     if (typeof window === "undefined") return;
     isLoading.value = true;
@@ -176,7 +214,6 @@ export const useArcAppKit = () => {
     try {
       // Mobile without MetaMask browser — deep link
       if (isMobile() && !isMetaMaskBrowser() && !getProvider()) {
-        const url = encodeURIComponent(window.location.href);
         window.location.href = `https://metamask.app.link/dapp/${window.location.host}`;
         return;
       }
@@ -198,20 +235,7 @@ export const useArcAppKit = () => {
         return;
       }
 
-      account.value = accounts[0];
-      isConnected.value = true;
-
-      publicClient = createPublicClient({
-        chain,
-        transport: http(chain.rpcUrls.default.http[0]),
-      });
-
-      walletClient = createWalletClient({
-        chain,
-        account: accounts[0],
-        transport: custom(provider),
-      });
-
+      _setupClients(accounts[0]);
       await fetchBalance();
     } catch (e) {
       error.value =
@@ -225,16 +249,16 @@ export const useArcAppKit = () => {
     isConnected.value = false;
     account.value = null;
     balance.value = 0n;
-    publicClient = null;
-    walletClient = null;
+    _publicClient = null;
+    _walletClient = null;
   };
 
   // ── Balance ───────────────────────────────────────────────────────────────
 
   const fetchBalance = async (): Promise<bigint> => {
-    if (!publicClient || !account.value) return 0n;
+    if (!_publicClient || !account.value) return 0n;
     try {
-      const bal = await publicClient.readContract({
+      const bal = await _publicClient.readContract({
         address: usdcAddress(),
         abi: ERC20_ABI,
         functionName: "balanceOf",
@@ -257,7 +281,7 @@ export const useArcAppKit = () => {
     orderId: string,
     usdcAmount: bigint
   ): Promise<Hash> => {
-    if (!publicClient || !walletClient || !account.value) {
+    if (!_publicClient || !_walletClient || !account.value) {
       throw new Error("Wallet not connected");
     }
     if (!contractAddress() || contractAddress() === "0x0000000000000000000000000000000000000000") {
@@ -265,7 +289,7 @@ export const useArcAppKit = () => {
     }
 
     // 1. Check allowance
-    const allowance = (await publicClient.readContract({
+    const allowance = (await _publicClient.readContract({
       address: usdcAddress(),
       abi: ERC20_ABI,
       functionName: "allowance",
@@ -276,7 +300,7 @@ export const useArcAppKit = () => {
 
     // 2. Approve if needed
     if (allowance < usdcAmount) {
-      const approveHash = await walletClient.writeContract({
+      const approveHash = await _walletClient.writeContract({
         chain,
         account: signer,
         address: usdcAddress(),
@@ -284,11 +308,11 @@ export const useArcAppKit = () => {
         functionName: "approve",
         args: [contractAddress(), usdcAmount],
       });
-      await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      await _publicClient.waitForTransactionReceipt({ hash: approveHash });
     }
 
     // 3. Call payMerchant
-    const hash = await walletClient.writeContract({
+    const hash = await _walletClient.writeContract({
       chain,
       account: signer,
       address: contractAddress(),
@@ -297,7 +321,7 @@ export const useArcAppKit = () => {
       args: [merchant, orderId, usdcAmount],
     });
 
-    await publicClient.waitForTransactionReceipt({ hash });
+    await _publicClient.waitForTransactionReceipt({ hash });
     await fetchBalance();
     return hash;
   };
@@ -331,24 +355,24 @@ export const useArcAppKit = () => {
       transport: http(rpcUrl),
     });
 
+    const PAYMENT_EVENT = {
+      name: "PaymentProcessed",
+      type: "event",
+      inputs: [
+        { name: "merchant", type: "address", indexed: true },
+        { name: "payer", type: "address", indexed: true },
+        { name: "orderHash", type: "bytes32", indexed: true },
+        { name: "orderId", type: "string", indexed: false },
+        { name: "amount", type: "uint256", indexed: false },
+        { name: "timestamp", type: "uint256", indexed: false },
+      ],
+    } as const;
+
     const poll = async () => {
       try {
         const currentBlock = await pollClient.getBlockNumber();
         const fromBlock =
           lastBlock > 0n ? lastBlock : currentBlock - 1000n < 0n ? 0n : currentBlock - 1000n;
-
-        const PAYMENT_EVENT = {
-          name: "PaymentProcessed",
-          type: "event",
-          inputs: [
-            { name: "merchant", type: "address", indexed: true },
-            { name: "payer", type: "address", indexed: true },
-            { name: "orderHash", type: "bytes32", indexed: true },
-            { name: "orderId", type: "string", indexed: false },
-            { name: "amount", type: "uint256", indexed: false },
-            { name: "timestamp", type: "uint256", indexed: false },
-          ],
-        } as const;
 
         const logs = await pollClient.getLogs({
           address: contractAddress(),
@@ -384,11 +408,9 @@ export const useArcAppKit = () => {
       }
     };
 
-    // Start polling (every 2.5s)
     poll();
     pollingInterval = setInterval(poll, 2500);
 
-    // Return cleanup
     return () => {
       if (pollingInterval) clearInterval(pollingInterval);
     };
@@ -401,6 +423,7 @@ export const useArcAppKit = () => {
     isLoading,
     error,
     connectWallet,
+    checkConnection,
     disconnectWallet,
     fetchBalance,
     formatBalance,

@@ -44,7 +44,7 @@ const copyToClipboard = async (text: string) => {
   try { await navigator.clipboard.writeText(text); } catch {}
 };
 
-onMounted(() => {
+onMounted(async () => {
   isMobileDevice.value = isMobileCheck();
 
   if (route.query.merchant) merchantAddress.value = route.query.merchant as `0x${string}`;
@@ -63,6 +63,9 @@ onMounted(() => {
     paymentStatus.value = "error";
     paymentMessage.value = "Invalid payment parameters. Please scan a valid QR code.";
   }
+
+  // Silently detect an already-connected wallet without prompting
+  await arc.checkConnection();
 });
 
 const handleConnectWallet = async () => {

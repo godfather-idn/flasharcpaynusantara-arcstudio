@@ -33,11 +33,8 @@ const isMobileCheck = (): boolean => {
 
 onMounted(async () => {
   isMobileDevice.value = isMobileCheck();
-  try {
-    await arc.connectWallet();
-  } catch (e) {
-    console.error("Failed to connect wallet:", e);
-  }
+  // Silently detect an already-connected wallet without prompting
+  await arc.checkConnection();
 });
 
 onUnmounted(() => {

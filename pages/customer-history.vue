@@ -69,7 +69,16 @@ const formatTimestamp = (ts: number) =>
   new Date(ts).toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 const clearFilters = () => { searchQuery.value = ""; dateFrom.value = ""; dateTo.value = ""; };
-const viewReceipt = (txHash: string) => router.push(`/receipt?txHash=${txHash}`);
+const viewReceipt = (tx: ReturnType<typeof history.getPayments>[0]) => {
+  const params = new URLSearchParams({
+    txHash: tx.txHash || "",
+    orderId: tx.orderId || "",
+    merchant: tx.merchant || "",
+    payer: tx.payer || "",
+    amount: tx.amount || "0",
+  });
+  router.push(`/receipt?${params.toString()}`);
+};
 
 const handleWalletSelect = async () => {
   showWalletModal.value = false;
@@ -85,11 +94,7 @@ const handleWalletSelect = async () => {
 
 onMounted(async () => {
   isMobileDevice.value = isMobileCheck();
-  try {
-    await arc.connectWallet();
-  } catch (e: any) {
-    connectionError.value = e.message || "Failed to connect wallet";
-  }
+  await arc.checkConnection();
 });
 </script>
 
@@ -225,7 +230,7 @@ onMounted(async () => {
                   </span>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm">
-                  <button v-if="tx.txHash" @click="viewReceipt(tx.txHash)" class="text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1">
+                  <button v-if="tx.txHash" @click="viewReceipt(tx)" class="text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1">
                     <ExternalLink :size="16" />
                     View Receipt
                   </button>

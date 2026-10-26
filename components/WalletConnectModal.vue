@@ -9,7 +9,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  selectWallet: [walletType: string, openInApp: boolean];
+  selectWallet: [walletType: string];
 }>();
 
 const walletOptions = [
@@ -40,7 +40,7 @@ const walletOptions = [
 ];
 
 const handleSelectWallet = (walletType: string) => {
-  emit("selectWallet", walletType, true);
+  emit("selectWallet", walletType);
   emit("close");
 };
 
