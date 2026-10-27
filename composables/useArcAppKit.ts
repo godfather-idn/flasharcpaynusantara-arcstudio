@@ -371,25 +371,34 @@ export const useArcAppKit = () => {
     const poll = async () => {
       try {
         const currentBlock = await pollClient.getBlockNumber();
+        // On first poll look back 50 blocks; afterwards scan only new blocks
         const fromBlock =
-          lastBlock > 0n ? lastBlock : currentBlock - 1000n < 0n ? 0n : currentBlock - 1000n;
+          lastBlock > 0n
+            ? lastBlock
+            : currentBlock > 50n ? currentBlock - 50n : 0n;
 
+        // Do NOT pass args/topics filter — Arc Testnet RPC rejects it (-32602).
+        // Filter matching merchant client-side instead.
         const logs = await pollClient.getLogs({
           address: contractAddress(),
           event: PAYMENT_EVENT,
-          args: { merchant: merchantAddress },
           fromBlock,
           toBlock: currentBlock,
         });
 
         for (const log of logs) {
           const args = log.args as {
+            merchant?: Address;
             payer?: Address;
             orderHash?: `0x${string}`;
             orderId?: string;
             amount?: bigint;
             timestamp?: bigint;
           };
+          // Client-side merchant filter
+          if (
+            args.merchant?.toLowerCase() !== merchantAddress.toLowerCase()
+          ) continue;
           if (args.payer && args.orderHash && args.orderId && args.amount && args.timestamp) {
             callback({
               payer: args.payer,
