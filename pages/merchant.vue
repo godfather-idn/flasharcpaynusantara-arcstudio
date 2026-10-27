@@ -71,7 +71,7 @@ const generateQR = async () => {
   if (isNaN(amountNum) || amountNum <= 0) return;
 
   try {
-    const amountRaw = arc.parseUSDC(amount.value).toString();
+    const amountRaw = arc.parseUSDC(String(amount.value)).toString();
     const baseUrl = window.location.origin;
     const payUrl = `${baseUrl}/pay?merchant=${arc.account.value}&amount=${amountRaw}&orderId=${orderId.value}`;
 
