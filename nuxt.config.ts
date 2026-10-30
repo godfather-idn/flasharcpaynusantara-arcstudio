@@ -22,13 +22,18 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      arcRpcUrl:
-        process.env.VITE_ARC_RPC_URL || "https://rpc.testnet.arc.io",
-      arcChainId: process.env.VITE_ARC_CHAIN_ID || "5042002",
-      flashArcPayAddress: process.env.VITE_FLASH_ARC_PAY_ADDRESS || "",
+      // Arc network — set VITE_ARC_CHAIN_ID=5042 for mainnet, 5042002 for testnet
+      arcChainId:  process.env.VITE_ARC_CHAIN_ID  || "5042002",
+      arcRpcUrl:   process.env.VITE_ARC_RPC_URL   || "https://rpc.testnet.arc.io",
+      arcExplorer: process.env.VITE_ARC_EXPLORER   || "https://explorer.testnet.arc.io",
+
+      // USDC is a fixed predeploy at the same address on every Arc network
       usdcContractAddress:
         process.env.VITE_USDC_CONTRACT_ADDRESS ||
         "0x3600000000000000000000000000000000000000",
+
+      // Deployed FlashArcPay contract address (set after deploy)
+      flashArcPayAddress: process.env.VITE_FLASH_ARC_PAY_ADDRESS || "",
     },
   },
 
